@@ -1,0 +1,231 @@
+---
+---
+<canvas id="hat-tiling-canvas" class="hat-tiling"></canvas>
+
+<script>
+  import { generateHatTiling, pointInPolygon, type HatTileResult } from '../../lib/hat-monotile';
+
+  class HatTilingRenderer {
+    private canvas: HTMLCanvasElement;
+    private ctx: CanvasRenderingContext2D;
+    private tiles: HatTileResult[] = [];
+    private hoveredTile: number = -1;
+    private animFrame: number = 0;
+    private observer: IntersectionObserver;
+    private isVisible = false;
+    private needsRedraw = true;
+
+    // Read design tokens from CSS
+    private outlineColor = '#939391';
+    private outlineOpacity = 0.35;
+    private hoverDarken = 0.08;
+
+    // Tiling transform (scale + translate to fit canvas)
+    private scale = 1;
+    private offsetX = 0;
+    private offsetY = 0;
+
+    constructor(canvas: HTMLCanvasElement) {
+      this.canvas = canvas;
+      this.ctx = canvas.getContext('2d')!;
+
+      // Read CSS custom properties
+      const styles = getComputedStyle(document.documentElement);
+      this.outlineColor = styles.getPropertyValue('--color-tile-outline').trim() || this.outlineColor;
+      const opacity = parseFloat(styles.getPropertyValue('--tile-outline-opacity').trim());
+      if (!isNaN(opacity)) this.outlineOpacity = opacity;
+      const darken = parseFloat(styles.getPropertyValue('--tile-hover-darken').trim());
+      if (!isNaN(darken)) this.hoverDarken = darken;
+
+      this.observer = new IntersectionObserver(
+        (entries) => {
+          this.isVisible = entries[0].isIntersecting;
+          if (this.isVisible && this.needsRedraw) this.render();
+        },
+        { threshold: 0 }
+      );
+      this.observer.observe(this.canvas);
+
+      this.init();
+    }
+
+    private init() {
+      this.resize();
+      window.addEventListener('resize', () => this.resize());
+      this.canvas.addEventListener('pointermove', (e) => this.onPointerMove(e));
+      this.canvas.addEventListener('pointerleave', () => this.onPointerLeave());
+
+      // Generate tiling (3 levels gives ~300 tiles, plenty for a margin)
+      this.tiles = generateHatTiling(3);
+      this.computeTransform();
+      this.render();
+    }
+
+    private resize() {
+      const parent = this.canvas.parentElement;
+      if (!parent) return;
+      const rect = parent.getBoundingClientRect();
+      const dpr = window.devicePixelRatio || 1;
+      this.canvas.width = rect.width * dpr;
+      this.canvas.height = rect.height * dpr;
+      this.canvas.style.width = rect.width + 'px';
+      this.canvas.style.height = rect.height + 'px';
+      this.ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+      this.computeTransform();
+      this.needsRedraw = true;
+      if (this.isVisible) this.render();
+    }
+
+    private computeTransform() {
+      if (this.tiles.length === 0) return;
+
+      // Find bounding box of all tiles
+      let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+      for (const tile of this.tiles) {
+        for (const v of tile.vertices) {
+          if (v.x < minX) minX = v.x;
+          if (v.y < minY) minY = v.y;
+          if (v.x > maxX) maxX = v.x;
+          if (v.y > maxY) maxY = v.y;
+        }
+      }
+
+      const tileW = maxX - minX;
+      const tileH = maxY - minY;
+      const canvasW = this.canvas.width / (window.devicePixelRatio || 1);
+      const canvasH = this.canvas.height / (window.devicePixelRatio || 1);
+
+      // Scale to fill height, overflow width is fine (will be clipped/faded)
+      this.scale = canvasH / tileH * 1.2;
+      this.offsetX = -minX * this.scale + (canvasW - tileW * this.scale) / 2;
+      this.offsetY = -minY * this.scale + (canvasH - tileH * this.scale) / 2;
+    }
+
+    private worldToScreen(p: { x: number; y: number }): { x: number; y: number } {
+      return {
+        x: p.x * this.scale + this.offsetX,
+        y: p.y * this.scale + this.offsetY,
+      };
+    }
+
+    private screenToWorld(sx: number, sy: number): { x: number; y: number } {
+      return {
+        x: (sx - this.offsetX) / this.scale,
+        y: (sy - this.offsetY) / this.scale,
+      };
+    }
+
+    private onPointerMove(e: PointerEvent) {
+      const rect = this.canvas.getBoundingClientRect();
+      const sx = e.clientX - rect.left;
+      const sy = e.clientY - rect.top;
+      const worldPt = this.screenToWorld(sx, sy);
+
+      let found = -1;
+      // Check centroid distance first for performance, then exact test
+      for (let i = 0; i < this.tiles.length; i++) {
+        const tile = this.tiles[i];
+        const dx = worldPt.x - tile.centroid.x;
+        const dy = worldPt.y - tile.centroid.y;
+        if (dx * dx + dy * dy < 25) { // rough distance check
+          if (pointInPolygon(worldPt, tile.vertices)) {
+            found = i;
+            break;
+          }
+        }
+      }
+
+      if (found !== this.hoveredTile) {
+        this.hoveredTile = found;
+        this.needsRedraw = true;
+        if (this.isVisible) this.render();
+      }
+    }
+
+    private onPointerLeave() {
+      if (this.hoveredTile !== -1) {
+        this.hoveredTile = -1;
+        this.needsRedraw = true;
+        if (this.isVisible) this.render();
+      }
+    }
+
+    private render() {
+      this.needsRedraw = false;
+      const ctx = this.ctx;
+      const canvasW = this.canvas.width / (window.devicePixelRatio || 1);
+      const canvasH = this.canvas.height / (window.devicePixelRatio || 1);
+
+      ctx.clearRect(0, 0, canvasW, canvasH);
+
+      // Create a horizontal fade gradient for the alpha mask
+      // Full opacity on left, fading out toward right
+      const fadeStart = canvasW * 0.6;
+      const fadeEnd = canvasW * 0.95;
+
+      for (let i = 0; i < this.tiles.length; i++) {
+        const tile = this.tiles[i];
+        const screenVerts = tile.vertices.map(v => this.worldToScreen(v));
+
+        // Check if tile is visible on canvas
+        const xs = screenVerts.map(v => v.x);
+        const maxTileX = Math.max(...xs);
+        const minTileX = Math.min(...xs);
+        if (maxTileX < 0 || minTileX > canvasW) continue;
+        const ys = screenVerts.map(v => v.y);
+        if (Math.max(...ys) < 0 || Math.min(...ys) > canvasH) continue;
+
+        // Compute fade based on tile centroid X position
+        const screenCentroid = this.worldToScreen(tile.centroid);
+        let alpha = this.outlineOpacity;
+        if (screenCentroid.x > fadeStart) {
+          alpha *= Math.max(0, 1 - (screenCentroid.x - fadeStart) / (fadeEnd - fadeStart));
+        }
+
+        if (alpha < 0.01) continue;
+
+        const isHovered = i === this.hoveredTile;
+
+        ctx.beginPath();
+        ctx.moveTo(screenVerts[0].x, screenVerts[0].y);
+        for (let j = 1; j < screenVerts.length; j++) {
+          ctx.lineTo(screenVerts[j].x, screenVerts[j].y);
+        }
+        ctx.closePath();
+
+        if (isHovered) {
+          // Fill with slightly darker version of the background
+          ctx.fillStyle = `rgba(0, 0, 0, ${this.hoverDarken})`;
+          ctx.fill();
+        }
+
+        ctx.strokeStyle = this.outlineColor;
+        ctx.globalAlpha = alpha;
+        ctx.lineWidth = 0.5;
+        ctx.stroke();
+        ctx.globalAlpha = 1;
+      }
+    }
+
+    destroy() {
+      this.observer.disconnect();
+      cancelAnimationFrame(this.animFrame);
+    }
+  }
+
+  // Initialize when DOM is ready
+  const canvas = document.getElementById('hat-tiling-canvas') as HTMLCanvasElement;
+  if (canvas) {
+    new HatTilingRenderer(canvas);
+  }
+</script>
+
+<style>
+  .hat-tiling {
+    position: absolute;
+    inset: 0;
+    width: 100%;
+    height: 100%;
+    pointer-events: auto;
+  }
+</style>

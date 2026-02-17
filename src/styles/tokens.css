@@ -1,0 +1,59 @@
+:root {
+  /* ═══════════════════════════════════════════
+     Background Gradient
+     Direction: top-right → bottom-left
+     ═══════════════════════════════════════════ */
+  --color-bg-light: #BCC6AF;
+  --color-bg-dark: #3C4531;
+  --gradient-bg: linear-gradient(to bottom left, var(--color-bg-light), var(--color-bg-dark));
+
+  /* ═══════════════════════════════════════════
+     Text
+     ═══════════════════════════════════════════ */
+  --color-text-primary: #252525;
+  --color-text-secondary: #3a3a3a;
+
+  /* ═══════════════════════════════════════════
+     Typography
+     ═══════════════════════════════════════════ */
+  --font-heading: 'Playfair Display', Georgia, serif;
+  --font-body: 'Playfair Display', Georgia, serif;
+  --font-mono: 'JetBrains Mono', ui-monospace, monospace;
+
+  /* ═══════════════════════════════════════════
+     Monotile Tiling
+     ═══════════════════════════════════════════ */
+  --color-tile-outline: #939391;
+  --tile-outline-width: 0.5;
+  --tile-outline-opacity: 0.35;
+  --tile-hover-darken: 0.08;
+
+  /* ═══════════════════════════════════════════
+     Glassmorphic Bento Boxes
+     ═══════════════════════════════════════════ */
+  --glass-bg: rgba(255, 255, 255, 0.1);
+  --glass-blur: 12px;
+  --glass-border: rgba(255, 255, 255, 0.15);
+  --glass-border-radius: 16px;
+
+  /* ═══════════════════════════════════════════
+     Profile Picture
+     ═══════════════════════════════════════════ */
+  --profile-border-radius: 12px;
+
+  /* ═══════════════════════════════════════════
+     Grain / Noise Overlay
+     Subtle crusty noise across the viewport.
+     Heavier on sides, lighter in center for legibility.
+     ═══════════════════════════════════════════ */
+  --grain-opacity: 0.06;
+  --grain-opacity-center: 0.02;
+  --grain-base-frequency: 0.65;
+  --grain-mask-center-opacity: 0.3;
+
+  /* ═══════════════════════════════════════════
+     Layout Proportions
+     ═══════════════════════════════════════════ */
+  --margin-left: clamp(2rem, 10vw, 14rem);
+  --content-max-width: 720px;
+}

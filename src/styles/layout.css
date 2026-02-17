@@ -1,0 +1,51 @@
+.page-grid {
+  display: grid;
+  grid-template-columns: var(--margin-left) minmax(0, var(--content-max-width)) 1fr;
+  min-height: 100vh;
+  position: relative;
+}
+
+.margin-left {
+  grid-column: 1;
+  position: relative;
+  overflow: hidden;
+}
+
+.content {
+  grid-column: 2;
+  padding: 3rem 2rem;
+  position: relative;
+  z-index: 1;
+}
+
+.margin-right {
+  grid-column: 3;
+  position: relative;
+  overflow: hidden;
+}
+
+/* Glassmorphic bento box utility */
+.glass-box {
+  background: var(--glass-bg);
+  backdrop-filter: blur(var(--glass-blur));
+  -webkit-backdrop-filter: blur(var(--glass-blur));
+  border: 1px solid var(--glass-border);
+  border-radius: var(--glass-border-radius);
+  padding: 1rem 1.25rem;
+}
+
+@media (max-width: 768px) {
+  .page-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .margin-left,
+  .margin-right {
+    display: none;
+  }
+
+  .content {
+    grid-column: 1;
+    padding: 2rem 1.25rem;
+  }
+}

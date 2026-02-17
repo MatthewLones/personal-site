@@ -1,0 +1,51 @@
+---
+import BaseLayout from '../layouts/BaseLayout.astro';
+import Header from '../components/layout/Header.astro';
+import HatTiling from '../components/interactive/HatTiling.astro';
+---
+<BaseLayout title="Matthew Lones">
+  <HatTiling slot="margin-left" />
+
+  <Header />
+
+  <section id="about" class="section">
+    <h2>About</h2>
+    <p>
+      I'm Matthew — a second-year Applied Mathematics and Computer Engineering student at Queen's University.
+      My interests span mathematics, AI engineering, and data work. I like building things that are
+      intellectually interesting and technically sound.
+    </p>
+  </section>
+
+  <section id="projects" class="section">
+    <h2>Projects</h2>
+    <p class="placeholder-text">Projects coming soon.</p>
+  </section>
+
+  <section id="experience" class="section">
+    <h2>Experience</h2>
+    <p class="placeholder-text">Experience coming soon.</p>
+  </section>
+</BaseLayout>
+
+<style>
+  .section {
+    margin-bottom: 4rem;
+  }
+
+  .section h2 {
+    font-size: 1.75rem;
+    font-weight: 600;
+    margin-bottom: 1rem;
+  }
+
+  .section p {
+    line-height: 1.7;
+    max-width: 560px;
+  }
+
+  .placeholder-text {
+    color: var(--color-text-secondary);
+    font-style: italic;
+  }
+</style>

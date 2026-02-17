@@ -1,0 +1,87 @@
+---
+import Nav from './Nav.astro';
+---
+<header class="header">
+  <div class="header-top">
+    <h1 class="greeting">Hey There!</h1>
+    <Nav />
+  </div>
+
+  <div class="header-body">
+    <div class="profile-pic-placeholder" aria-label="Profile picture">
+      <span>Profile Pic</span>
+    </div>
+
+    <div class="contact-info glass-box">
+      <a href="https://github.com/MatthewLones" target="_blank" rel="noopener">GitHub</a>
+      <span class="divider">·</span>
+      <a href="https://linkedin.com/in/" target="_blank" rel="noopener">LinkedIn</a>
+      <span class="divider">·</span>
+      <a href="mailto:matthew@example.com">Email</a>
+    </div>
+  </div>
+
+  <p class="description">
+    Second-year Applied Mathematics & Computer Engineering student at Queen's University.
+    Interested in mathematics, AI engineering, and data work.
+  </p>
+</header>
+
+<style>
+  .header {
+    margin-bottom: 4rem;
+  }
+
+  .header-top {
+    display: flex;
+    justify-content: space-between;
+    align-items: flex-start;
+    margin-bottom: 1.5rem;
+    gap: 1rem;
+    flex-wrap: wrap;
+  }
+
+  .greeting {
+    font-size: 2.5rem;
+    font-weight: 700;
+  }
+
+  .header-body {
+    margin-bottom: 1.25rem;
+  }
+
+  .profile-pic-placeholder {
+    width: 100%;
+    max-width: 320px;
+    aspect-ratio: 4 / 5;
+    background: #6aaa6a;
+    border-radius: var(--profile-border-radius);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    color: white;
+    font-size: 1.25rem;
+    font-weight: 600;
+    margin-bottom: 1rem;
+  }
+
+  .contact-info {
+    display: flex;
+    align-items: center;
+    gap: 0.75rem;
+    width: fit-content;
+    padding: 0.6rem 1.25rem;
+    font-size: 0.9rem;
+  }
+
+  .divider {
+    opacity: 0.4;
+  }
+
+  .description {
+    font-size: 1.05rem;
+    line-height: 1.7;
+    max-width: 500px;
+    color: var(--color-text-secondary);
+  }
+</style>

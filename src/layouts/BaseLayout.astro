@@ -1,0 +1,35 @@
+---
+import GrainOverlay from '../components/layout/GrainOverlay.astro';
+import '../styles/global.css';
+import '../styles/layout.css';
+
+interface Props {
+  title?: string;
+}
+
+const { title = 'Matthew Lones' } = Astro.props;
+---
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <meta name="description" content="Matthew Lones — Applied Mathematics & Computer Engineering, Queen's University" />
+  <link rel="preload" href="/fonts/PlayfairDisplay-Regular.woff2" as="font" type="font/woff2" crossorigin />
+  <link rel="preload" href="/fonts/PlayfairDisplay-Italic.woff2" as="font" type="font/woff2" crossorigin />
+  <title>{title}</title>
+</head>
+<body>
+  <GrainOverlay />
+  <div class="page-grid">
+    <aside class="margin-left">
+      <slot name="margin-left" />
+    </aside>
+    <main class="content">
+      <slot />
+    </main>
+    <aside class="margin-right">
+      <slot name="margin-right" />
+    </aside>
+  </div>
+</body>
+</html>
