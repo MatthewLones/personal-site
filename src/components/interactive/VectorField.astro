@@ -1,0 +1,634 @@
+---
+---
+<div class="vector-field-container">
+  <canvas id="vector-field-canvas" class="vector-field-canvas"></canvas>
+  <div class="vf-mode-bar" role="radiogroup" aria-label="Interaction mode">
+    <button class="vf-mode-opt active" data-mode="push">push</button>
+    <button class="vf-mode-opt" data-mode="combing">flow</button>
+    <button class="vf-mode-opt" data-mode="radial">radial</button>
+    <button class="vf-mode-opt" data-mode="trace">trace</button>
+  </div>
+</div>
+
+<!-- Custom crosshair cursor for trace mode (position: fixed, follows pointer) -->
+<div class="vf-cursor" id="vf-cursor">
+  <svg width="18" height="18" viewBox="0 0 18 18" fill="none">
+    <line x1="2" y1="9" x2="6.5" y2="9" stroke="currentColor" stroke-width="1.2" stroke-linecap="round"/>
+    <line x1="11.5" y1="9" x2="16" y2="9" stroke="currentColor" stroke-width="1.2" stroke-linecap="round"/>
+    <line x1="9" y1="2" x2="9" y2="6.5" stroke="currentColor" stroke-width="1.2" stroke-linecap="round"/>
+    <line x1="9" y1="11.5" x2="9" y2="16" stroke="currentColor" stroke-width="1.2" stroke-linecap="round"/>
+  </svg>
+</div>
+
+<script>
+  import {
+    generateField,
+    generateBlobShape,
+    randomInitialField,
+    computeInteractionTarget,
+    computePushTarget,
+    stepField,
+    stepBall,
+    angleDiff,
+    isInsideBlob,
+    type VectorFieldCell,
+    type Vec2,
+    type InteractionMode,
+    type VectorFieldConfig,
+    type BlobShape,
+    type TraceBall,
+  } from '../../lib/vector-field';
+
+  class VectorFieldRenderer {
+    private canvas: HTMLCanvasElement;
+    private ctx: CanvasRenderingContext2D;
+    private container: HTMLElement;
+    private modeButtons: NodeListOf<HTMLButtonElement>;
+    private cursorEl: HTMLElement;
+
+    // Overlay canvas for ball rendering (full document, position: absolute)
+    private overlay!: HTMLCanvasElement;
+    private overlayCtx!: CanvasRenderingContext2D;
+    private overlayW = 0;
+    private overlayH = 0;
+
+    private cells: VectorFieldCell[] = [];
+    private config!: VectorFieldConfig;
+    private blob!: BlobShape;
+    private mode: InteractionMode = 'push';
+
+    // Tokens
+    private arrowColor = '#3a3020';
+    private arrowLength = 10;
+    private arrowHeadSize = 3;
+    private arrowWidth = 1;
+    private gridSpacing = 12;
+    private fieldRadius = 250;
+    private influenceRadius = 70;
+    private springK = 120;
+    private damping = 16;
+    private pushContact = 4;
+    private pushStrength = 0.8;
+    private ballRadius = 3;
+    private ballColor = '#3a3020';
+    private ballColorRGB: [number, number, number] = [58, 48, 32];
+    private ballSpeed = 120;
+    private ballGravity = 200;
+    private ballTrailMax = 30;
+
+    // State
+    private balls: TraceBall[] = [];
+    private ballShades: [number, number, number][] = [];
+    private pendingRender = false;
+    private isAnimating = false;
+    private lastFrameTime = 0;
+    private cursorPos: Vec2 | null = null;
+    private lastCursorPos: Vec2 | null = null;
+    private cursorInField = false;
+    private dpr = 1;
+    private canvasW = 0;
+    private canvasH = 0;
+
+    constructor(canvas: HTMLCanvasElement) {
+      this.canvas = canvas;
+      this.ctx = canvas.getContext('2d')!;
+      this.container = canvas.parentElement!;
+      this.modeButtons = this.container.querySelectorAll<HTMLButtonElement>('.vf-mode-opt');
+      this.cursorEl = document.getElementById('vf-cursor')!;
+
+      this.cursorEl.addEventListener('animationend', () => {
+        this.cursorEl.classList.remove('pressed');
+      });
+
+      this.readTokens();
+      this.createOverlay();
+      this.init();
+    }
+
+    private readTokens(): void {
+      const s = getComputedStyle(document.documentElement);
+      const str = (name: string) => s.getPropertyValue(name).trim();
+      const num = (name: string, fallback: number) => {
+        const v = parseFloat(str(name));
+        return isNaN(v) ? fallback : v;
+      };
+
+      const color = str('--vf-arrow-color');
+      if (color) this.arrowColor = color;
+      this.arrowLength = num('--vf-arrow-length', this.arrowLength);
+      this.arrowHeadSize = num('--vf-arrow-head-size', this.arrowHeadSize);
+      this.arrowWidth = num('--vf-arrow-width', this.arrowWidth);
+      this.gridSpacing = num('--vf-grid-spacing', this.gridSpacing);
+      this.fieldRadius = num('--vf-field-radius', this.fieldRadius);
+      this.influenceRadius = num('--vf-influence-radius', this.influenceRadius);
+      this.springK = num('--vf-spring-k', this.springK);
+      this.damping = num('--vf-damping', this.damping);
+      this.pushContact = num('--vf-push-contact', this.pushContact);
+      this.pushStrength = num('--vf-push-strength', this.pushStrength);
+      this.ballRadius = num('--vf-ball-radius', this.ballRadius);
+      const ballColor = str('--vf-ball-color');
+      if (ballColor) this.ballColor = ballColor;
+      const hex = this.ballColor.replace('#', '');
+      if (hex.length === 6) {
+        this.ballColorRGB = [
+          parseInt(hex.slice(0, 2), 16),
+          parseInt(hex.slice(2, 4), 16),
+          parseInt(hex.slice(4, 6), 16),
+        ];
+      }
+      this.ballSpeed = num('--vf-ball-speed', this.ballSpeed);
+      this.ballGravity = num('--vf-ball-gravity', this.ballGravity);
+      this.ballTrailMax = num('--vf-ball-trail', this.ballTrailMax);
+    }
+
+    private createOverlay(): void {
+      this.overlay = document.createElement('canvas');
+      this.overlay.style.cssText = 'position:absolute;top:0;left:0;pointer-events:none;z-index:3';
+      document.body.appendChild(this.overlay);
+      this.overlayCtx = this.overlay.getContext('2d')!;
+      this.sizeOverlay();
+      window.addEventListener('resize', () => this.sizeOverlay());
+    }
+
+    private sizeOverlay(): void {
+      this.dpr = window.devicePixelRatio || 1;
+      this.overlayW = document.documentElement.scrollWidth;
+      this.overlayH = document.documentElement.scrollHeight;
+      this.overlay.style.width = this.overlayW + 'px';
+      this.overlay.style.height = this.overlayH + 'px';
+      this.overlay.width = this.overlayW * this.dpr;
+      this.overlay.height = this.overlayH * this.dpr;
+      this.overlayCtx.setTransform(this.dpr, 0, 0, this.dpr, 0, 0);
+    }
+
+    private init(): void {
+      this.setupCanvas();
+      this.generateCells();
+      this.bindEvents();
+      this.scheduleRender();
+    }
+
+    private setupCanvas(): void {
+      this.dpr = window.devicePixelRatio || 1;
+      const rect = this.container.getBoundingClientRect();
+      const w = rect.width;
+      const h = this.fieldRadius * 2 + 60;
+
+      this.canvasW = w;
+      this.canvasH = h;
+      this.canvas.width = w * this.dpr;
+      this.canvas.height = h * this.dpr;
+      this.canvas.style.width = w + 'px';
+      this.canvas.style.height = h + 'px';
+      this.ctx.setTransform(this.dpr, 0, 0, this.dpr, 0, 0);
+    }
+
+    private generateCells(): void {
+      const cx = this.canvasW * 0.55;
+      const cy = this.canvasH * 0.58;
+
+      this.config = {
+        gridSpacing: this.gridSpacing,
+        radius: this.fieldRadius,
+        center: { x: cx, y: cy },
+      };
+
+      this.blob = generateBlobShape({ x: cx, y: cy }, this.fieldRadius);
+
+      const initialFn = randomInitialField();
+      this.cells = generateField(this.config, this.blob, initialFn);
+    }
+
+    private bindEvents(): void {
+      this.canvas.addEventListener('pointermove', (e) => this.onPointerMove(e), { passive: true });
+      this.canvas.addEventListener('pointerdown', (e) => this.onPointerDown(e));
+      this.canvas.addEventListener('pointerleave', () => this.onPointerLeave());
+      this.canvas.addEventListener('pointerenter', (e) => this.onPointerEnter(e));
+      this.modeButtons.forEach((btn) => {
+        btn.addEventListener('click', () => this.onModeSelect(btn.dataset.mode as InteractionMode));
+      });
+
+      const ro = new ResizeObserver(() => {
+        const rect = this.container.getBoundingClientRect();
+        // Only regenerate if width actually changed (avoids sub-pixel reflows)
+        if (Math.abs(rect.width - this.canvasW) < 1) return;
+        this.setupCanvas();
+        this.generateCells();
+        this.scheduleRender();
+      });
+      ro.observe(this.container);
+    }
+
+    // ─── Coordinate transforms ───────────────────────────────
+
+    private clientToField(clientX: number, clientY: number): Vec2 {
+      const rect = this.canvas.getBoundingClientRect();
+      return {
+        x: clientX - rect.left,
+        y: clientY - rect.top,
+      };
+    }
+
+    /** Get the offset to convert field-local coords to page coords. */
+    private getFieldOffset(): Vec2 {
+      const rect = this.canvas.getBoundingClientRect();
+      return {
+        x: rect.left + window.scrollX,
+        y: rect.top + window.scrollY,
+      };
+    }
+
+    // ─── Per-ball shade generation ───────────────────────────
+
+    private generateShade(): [number, number, number] {
+      const base = this.ballColorRGB;
+      const clamp = (v: number) => Math.max(0, Math.min(255, v));
+      return [
+        clamp(base[0] + Math.round((Math.random() - 0.5) * 30)),
+        clamp(base[1] + Math.round((Math.random() - 0.5) * 30)),
+        clamp(base[2] + Math.round((Math.random() - 0.5) * 30)),
+      ];
+    }
+
+    // ─── Pointer events ─────────────────────────────────────
+
+    private onPointerMove(e: PointerEvent): void {
+      const pos = this.clientToField(e.clientX, e.clientY);
+      this.cursorPos = pos;
+      this.cursorInField = isInsideBlob(pos, this.blob);
+
+      // Track cursor position for the custom crosshair
+      if (this.mode === 'trace') {
+        this.cursorEl.style.left = e.clientX + 'px';
+        this.cursorEl.style.top = e.clientY + 'px';
+        return;
+      }
+
+      const prevPos = this.lastCursorPos;
+      this.lastCursorPos = pos;
+
+      if (!prevPos) return;
+
+      const dx = pos.x - prevPos.x;
+      const dy = pos.y - prevPos.y;
+      const dist = Math.sqrt(dx * dx + dy * dy);
+
+      if (dist < 2) return;
+
+      const delta: Vec2 = { x: dx, y: dy };
+      this.interpolateAlongLine(prevPos, pos, delta);
+
+      if (!this.isAnimating) {
+        this.isAnimating = true;
+        this.lastFrameTime = performance.now();
+        this.scheduleRender();
+      }
+    }
+
+    private interpolateAlongLine(from: Vec2, to: Vec2, delta: Vec2): void {
+      const dx = to.x - from.x;
+      const dy = to.y - from.y;
+      const dist = Math.sqrt(dx * dx + dy * dy);
+      const step = 8;
+      const steps = Math.max(1, Math.round(dist / step));
+
+      for (let i = 1; i <= steps; i++) {
+        const t = i / steps;
+        const samplePos: Vec2 = {
+          x: from.x + dx * t,
+          y: from.y + dy * t,
+        };
+        this.updateCellTargets(samplePos, delta);
+      }
+    }
+
+    private onPointerDown(e: PointerEvent): void {
+      if (this.mode !== 'trace') return;
+      const fieldPos = this.clientToField(e.clientX, e.clientY);
+      const offset = this.getFieldOffset();
+      // Add new ball in page coordinates
+      this.balls.push({
+        pos: { x: fieldPos.x + offset.x, y: fieldPos.y + offset.y },
+        vel: { x: 0, y: 0 },
+        active: true,
+        trail: [],
+      });
+      this.ballShades.push(this.generateShade());
+
+      // Trigger press animation on the custom cursor
+      this.cursorEl.classList.remove('pressed');
+      void this.cursorEl.offsetWidth;
+      this.cursorEl.classList.add('pressed');
+
+      if (!this.isAnimating) {
+        this.isAnimating = true;
+        this.lastFrameTime = performance.now();
+        this.scheduleRender();
+      }
+    }
+
+    private onPointerEnter(e: PointerEvent): void {
+      const pos = this.clientToField(e.clientX, e.clientY);
+      this.lastCursorPos = pos;
+      this.cursorPos = pos;
+
+      if (this.mode === 'trace') {
+        this.cursorEl.style.left = e.clientX + 'px';
+        this.cursorEl.style.top = e.clientY + 'px';
+        this.cursorEl.classList.add('visible');
+      }
+    }
+
+    private onPointerLeave(): void {
+      this.cursorInField = false;
+      this.cursorPos = null;
+      this.lastCursorPos = null;
+      this.cursorEl.classList.remove('visible');
+    }
+
+    private onModeSelect(mode: InteractionMode): void {
+      if (mode === this.mode) return;
+      this.mode = mode;
+
+      this.modeButtons.forEach((btn) => {
+        btn.classList.toggle('active', btn.dataset.mode === mode);
+      });
+
+      // Toggle custom cursor and native cursor hiding
+      this.canvas.classList.toggle('trace-cursor', mode === 'trace');
+      if (mode !== 'trace') {
+        this.cursorEl.classList.remove('visible');
+      } else if (this.cursorPos) {
+        this.cursorEl.classList.add('visible');
+      }
+
+      if (this.mode === 'radial' && this.cursorPos && this.cursorInField) {
+        this.updateCellTargets(this.cursorPos, { x: 0, y: 0 });
+        if (!this.isAnimating) {
+          this.isAnimating = true;
+          this.lastFrameTime = performance.now();
+          this.scheduleRender();
+        }
+      }
+    }
+
+    private updateCellTargets(cursorPos: Vec2, delta: Vec2): void {
+      const halfLen = this.arrowLength / 2;
+
+      for (let i = 0; i < this.cells.length; i++) {
+        const cell = this.cells[i];
+
+        if (this.mode === 'push') {
+          const angleDelta = computePushTarget(
+            cell,
+            cursorPos,
+            delta,
+            halfLen,
+            this.pushContact,
+            this.pushStrength,
+          );
+          if (angleDelta !== null) {
+            cell.targetAngle += angleDelta;
+          }
+        } else {
+          const result = computeInteractionTarget(
+            cell,
+            cursorPos,
+            delta,
+            this.mode,
+            this.influenceRadius,
+          );
+          if (result) {
+            const diff = angleDiff(cell.targetAngle, result.angle);
+            cell.targetAngle += diff * result.influence;
+          }
+        }
+      }
+    }
+
+    // ─── Animation loop ─────────────────────────────────────
+
+    private scheduleRender(): void {
+      if (this.pendingRender) return;
+      this.pendingRender = true;
+
+      requestAnimationFrame((t) => {
+        this.pendingRender = false;
+        const dt = Math.min((t - this.lastFrameTime) / 1000, 0.05);
+        this.lastFrameTime = t;
+
+        const stillMoving = stepField(this.cells, dt, this.springK, this.damping);
+
+        // Step all balls (positions in page coords)
+        const fieldOffset = this.getFieldOffset();
+        const pageBottom = this.overlayH;
+
+        for (let b = 0; b < this.balls.length; b++) {
+          const ball = this.balls[b];
+          if (!ball.active) continue;
+          stepBall(
+            ball, this.cells, this.blob, fieldOffset, dt,
+            this.ballSpeed, this.ballGravity,
+            this.gridSpacing * 2, this.ballTrailMax,
+          );
+          if (ball.pos.y > pageBottom) ball.active = false;
+        }
+
+        // Prune dead balls (keep shades in sync)
+        const newBalls: TraceBall[] = [];
+        const newShades: [number, number, number][] = [];
+        for (let i = 0; i < this.balls.length; i++) {
+          if (this.balls[i].active) {
+            newBalls.push(this.balls[i]);
+            newShades.push(this.ballShades[i]);
+          }
+        }
+        this.balls = newBalls;
+        this.ballShades = newShades;
+
+        this.render();
+        this.renderBall();
+
+        const anyBalls = this.balls.length > 0;
+        if (stillMoving || anyBalls) {
+          this.scheduleRender();
+        } else {
+          this.isAnimating = false;
+        }
+      });
+    }
+
+    // ─── Rendering ──────────────────────────────────────────
+
+    private render(): void {
+      const ctx = this.ctx;
+      ctx.clearRect(0, 0, this.canvasW, this.canvasH);
+
+      const halfLen = this.arrowLength / 2;
+      const headSize = this.arrowHeadSize;
+      const headAngle = Math.PI * 0.8;
+
+      ctx.beginPath();
+      for (let i = 0; i < this.cells.length; i++) {
+        const cell = this.cells[i];
+        const px = cell.pos.x;
+        const py = cell.pos.y;
+        const cos = Math.cos(cell.angle);
+        const sin = Math.sin(cell.angle);
+
+        const x1 = px - cos * halfLen;
+        const y1 = py - sin * halfLen;
+        const x2 = px + cos * halfLen;
+        const y2 = py + sin * halfLen;
+        ctx.moveTo(x1, y1);
+        ctx.lineTo(x2, y2);
+
+        const hx1 = x2 + Math.cos(cell.angle + headAngle) * headSize;
+        const hy1 = y2 + Math.sin(cell.angle + headAngle) * headSize;
+        const hx2 = x2 + Math.cos(cell.angle - headAngle) * headSize;
+        const hy2 = y2 + Math.sin(cell.angle - headAngle) * headSize;
+        ctx.moveTo(hx1, hy1);
+        ctx.lineTo(x2, y2);
+        ctx.lineTo(hx2, hy2);
+      }
+      ctx.strokeStyle = this.arrowColor;
+      ctx.lineWidth = this.arrowWidth;
+      ctx.lineCap = 'round';
+      ctx.lineJoin = 'round';
+      ctx.stroke();
+    }
+
+    private renderBall(): void {
+      const oc = this.overlayCtx;
+      oc.clearRect(0, 0, this.overlayW, this.overlayH);
+
+      if (this.balls.length === 0) return;
+
+      oc.lineCap = 'butt';
+
+      // Viewport bounds for culling off-screen trail segments
+      const scrollY = window.scrollY;
+      const viewTop = scrollY - 20;
+      const viewBottom = scrollY + window.innerHeight + 20;
+
+      for (let b = 0; b < this.balls.length; b++) {
+        const ball = this.balls[b];
+        if (!ball.active || ball.trail.length < 2) continue;
+
+        const shade = this.ballShades[b];
+        const trail = ball.trail;
+        const len = trail.length;
+
+        // Trail: smooth fading line in page coords
+        for (let i = 1; i < len; i++) {
+          const p0 = trail[i - 1];
+          const p1 = trail[i];
+
+          // Skip segments entirely outside viewport
+          if ((p0.y < viewTop && p1.y < viewTop) || (p0.y > viewBottom && p1.y > viewBottom)) continue;
+
+          const t = i / len;
+          oc.beginPath();
+          oc.moveTo(p0.x, p0.y);
+          oc.lineTo(p1.x, p1.y);
+          oc.strokeStyle = `rgba(${shade[0]},${shade[1]},${shade[2]},${t * 0.5})`;
+          oc.lineWidth = this.ballRadius * (0.4 + 0.6 * t);
+          oc.stroke();
+        }
+
+        // Ball: solid circle
+        oc.beginPath();
+        oc.arc(ball.pos.x, ball.pos.y, this.ballRadius, 0, Math.PI * 2);
+        oc.fillStyle = `rgb(${shade[0]},${shade[1]},${shade[2]})`;
+        oc.fill();
+      }
+    }
+  }
+
+  // ─── Bootstrap ──────────────────────────────────────────────
+
+  const canvas = document.getElementById('vector-field-canvas') as HTMLCanvasElement | null;
+  if (canvas) {
+    new VectorFieldRenderer(canvas);
+  }
+</script>
+
+<style>
+  .vector-field-container {
+    width: 100%;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    padding-top: 2rem;
+  }
+
+  .vector-field-canvas {
+    display: block;
+  }
+
+  .vector-field-canvas.trace-cursor {
+    cursor: none;
+  }
+
+  .vf-cursor {
+    position: fixed;
+    pointer-events: none;
+    z-index: 100;
+    display: none;
+    color: var(--vf-arrow-color);
+    opacity: 0.55;
+    transform: translate(-50%, -50%);
+  }
+
+  .vf-cursor.visible {
+    display: block;
+  }
+
+  .vf-cursor.pressed {
+    animation: cursor-press 0.2s ease-out;
+  }
+
+  @keyframes cursor-press {
+    0%  { transform: translate(-50%, -50%) scale(1); }
+    35% { transform: translate(-50%, calc(-50% + 3px)) scale(0.8); }
+    70% { transform: translate(-50%, calc(-50% - 1px)) scale(1.06); }
+    100% { transform: translate(-50%, -50%) scale(1); }
+  }
+
+  .vf-mode-bar {
+    display: flex;
+    gap: 1px;
+    margin-top: 0.75rem;
+    border: 1px solid var(--vf-arrow-color);
+    border-radius: 4px;
+    overflow: hidden;
+    opacity: 0.3;
+    transition: opacity 0.2s;
+  }
+
+  .vf-mode-bar:hover {
+    opacity: 0.6;
+  }
+
+  .vf-mode-opt {
+    font-family: var(--font-mono);
+    font-size: 0.6rem;
+    color: var(--vf-arrow-color);
+    background: transparent;
+    border: none;
+    border-right: 1px solid var(--vf-arrow-color);
+    padding: 3px 8px;
+    cursor: pointer;
+    line-height: 1;
+    transition: background 0.15s, color 0.15s;
+  }
+
+  .vf-mode-opt:last-child {
+    border-right: none;
+  }
+
+  .vf-mode-opt.active {
+    background: var(--vf-arrow-color);
+    color: var(--color-bg-light);
+  }
+</style>

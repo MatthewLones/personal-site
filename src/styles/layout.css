@@ -3,25 +3,31 @@
   grid-template-columns: var(--margin-left) minmax(0, var(--content-max-width)) 1fr;
   min-height: 100vh;
   position: relative;
+  z-index: 1;
 }
 
 .margin-left {
   grid-column: 1;
   position: relative;
-  overflow: hidden;
 }
 
-.content {
+/* Content card: glassmorphic panel sitting on top of the tiling layer.
+   Blocks pointer events from reaching the tiling underneath. */
+.content-card {
   grid-column: 2;
   padding: 3rem 2rem;
   position: relative;
-  z-index: 1;
+  z-index: 2;
+  background: var(--content-card-bg);
+  backdrop-filter: blur(var(--content-card-blur));
+  -webkit-backdrop-filter: blur(var(--content-card-blur));
+  border-left: 1px solid var(--content-card-border);
+  border-right: 1px solid var(--content-card-border);
 }
 
 .margin-right {
   grid-column: 3;
   position: relative;
-  overflow: hidden;
 }
 
 /* Glassmorphic bento box utility */
@@ -44,8 +50,10 @@
     display: none;
   }
 
-  .content {
+  .content-card {
     grid-column: 1;
     padding: 2rem 1.25rem;
+    border-left: none;
+    border-right: none;
   }
 }

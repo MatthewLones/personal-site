@@ -13,13 +13,20 @@ html {
   scroll-behavior: smooth;
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
+  background: var(--gradient-bg);
+  background-attachment: fixed;
+  scrollbar-width: none;
+}
+
+html::-webkit-scrollbar {
+  display: none;
 }
 
 body {
   font-family: var(--font-body);
   color: var(--color-text-primary);
   background: var(--gradient-bg);
-  background-attachment: fixed;
+  background-attachment: scroll;
   min-height: 100vh;
   line-height: 1.6;
 }

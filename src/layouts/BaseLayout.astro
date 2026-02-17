@@ -19,12 +19,18 @@ const { title = 'Matthew Lones' } = Astro.props;
   <title>{title}</title>
 </head>
 <body>
+  <!-- Full-page monotile tiling background -->
+  <slot name="tiling-bg" />
+
+  <!-- Layer 1: Grain overlay -->
   <GrainOverlay />
+
+  <!-- Layer 2: Content grid on top -->
   <div class="page-grid">
     <aside class="margin-left">
       <slot name="margin-left" />
     </aside>
-    <main class="content">
+    <main class="content-card">
       <slot />
     </main>
     <aside class="margin-right">

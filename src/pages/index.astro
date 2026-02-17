@@ -2,9 +2,11 @@
 import BaseLayout from '../layouts/BaseLayout.astro';
 import Header from '../components/layout/Header.astro';
 import HatTiling from '../components/interactive/HatTiling.astro';
+import VectorField from '../components/interactive/VectorField.astro';
 ---
 <BaseLayout title="Matthew Lones">
-  <HatTiling slot="margin-left" />
+  <HatTiling slot="tiling-bg" />
+  <VectorField slot="margin-right" />
 
   <Header />
 

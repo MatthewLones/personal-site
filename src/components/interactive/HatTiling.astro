@@ -1,29 +1,86 @@
 ---
 ---
-<canvas id="hat-tiling-canvas" class="hat-tiling"></canvas>
+<canvas id="hat-tiling-canvas" class="hat-tiling-bg"></canvas>
+<span id="tile-click-counter" class="tile-click-counter" aria-hidden="true"></span>
 
 <script>
   import { generateHatTiling, pointInPolygon, type HatTileResult } from '../../lib/hat-monotile';
+
+  // Parse hex color to [r, g, b]
+  function hexToRgb(hex: string): [number, number, number] {
+    hex = hex.replace('#', '');
+    return [
+      parseInt(hex.substring(0, 2), 16),
+      parseInt(hex.substring(2, 4), 16),
+      parseInt(hex.substring(4, 6), 16),
+    ];
+  }
+
+  // Lerp between two colors
+  function lerpColor(a: [number, number, number], b: [number, number, number], t: number): [number, number, number] {
+    return [
+      Math.round(a[0] + (b[0] - a[0]) * t),
+      Math.round(a[1] + (b[1] - a[1]) * t),
+      Math.round(a[2] + (b[2] - a[2]) * t),
+    ];
+  }
+
+  // Darken a color by a factor (0 = unchanged, 1 = black)
+  function darkenColor(rgb: [number, number, number], amount: number): [number, number, number] {
+    return [
+      Math.round(rgb[0] * (1 - amount)),
+      Math.round(rgb[1] * (1 - amount)),
+      Math.round(rgb[2] * (1 - amount)),
+    ];
+  }
 
   class HatTilingRenderer {
     private canvas: HTMLCanvasElement;
     private ctx: CanvasRenderingContext2D;
     private tiles: HatTileResult[] = [];
     private hoveredTile: number = -1;
-    private animFrame: number = 0;
-    private observer: IntersectionObserver;
-    private isVisible = false;
-    private needsRedraw = true;
 
-    // Read design tokens from CSS
-    private outlineColor = '#939391';
+    // Design tokens (read from CSS)
+    private outlineColor = '#2a3020';
     private outlineOpacity = 0.35;
     private hoverDarken = 0.08;
+    private hoverHold = 0.3;   // seconds to hold at full highlight
+    private hoverFade = 0.7;   // seconds to fade from full to zero
+    private tileSizeScale = 1.0;
+    private clickDarken = 0.15;
+    private clickScale = 1.25;
+    private clickDuration = 0.15;  // seconds — snap-back time on release
+    private bgLight: [number, number, number] = [188, 198, 175];
+    private bgDark: [number, number, number] = [60, 69, 49];
 
-    // Tiling transform (scale + translate to fit canvas)
+    // Tiling transform
     private scale = 1;
     private offsetX = 0;
     private offsetY = 0;
+
+    // Scroll state
+    private scrollY = 0;
+
+    // Content card left edge (tiles render to the left of this)
+    private cardLeft = Infinity;
+
+    // Hover trail: tiles that were recently hovered, fading out
+    private coolingTiles: Map<number, number> = new Map(); // tileIndex → timestamp
+    // Click pop animation: tiles scaling up, holding, then snapping back
+    private poppingTiles: Map<number, { pressTime: number; releaseTime: number }> = new Map();
+    private heldTile: number = -1; // tile currently being held down
+    private pendingRender = false;
+
+    // Pointer interpolation: track last pointer position for line-sweep
+    private lastPointerX = -1;
+    private lastPointerY = -1;
+
+    // Easter egg: click counter
+    private clickCount = 0;
+    private clickCounterEl: HTMLElement | null = null;
+
+    // Audio: subtle pen-click via Web Audio API
+    private audioCtx: AudioContext | null = null;
 
     constructor(canvas: HTMLCanvasElement) {
       this.canvas = canvas;
@@ -31,55 +88,79 @@
 
       // Read CSS custom properties
       const styles = getComputedStyle(document.documentElement);
-      this.outlineColor = styles.getPropertyValue('--color-tile-outline').trim() || this.outlineColor;
+      const outlineHex = styles.getPropertyValue('--tile-outline-color').trim();
+      if (outlineHex) this.outlineColor = outlineHex;
       const opacity = parseFloat(styles.getPropertyValue('--tile-outline-opacity').trim());
       if (!isNaN(opacity)) this.outlineOpacity = opacity;
       const darken = parseFloat(styles.getPropertyValue('--tile-hover-darken').trim());
       if (!isNaN(darken)) this.hoverDarken = darken;
+      const hold = parseFloat(styles.getPropertyValue('--tile-hover-hold').trim());
+      if (!isNaN(hold)) this.hoverHold = hold;
+      const fade = parseFloat(styles.getPropertyValue('--tile-hover-fade').trim());
+      if (!isNaN(fade)) this.hoverFade = fade;
+      const sizeScale = parseFloat(styles.getPropertyValue('--tile-size-scale').trim());
+      if (!isNaN(sizeScale)) this.tileSizeScale = sizeScale;
+      const clickDarken = parseFloat(styles.getPropertyValue('--tile-click-darken').trim());
+      if (!isNaN(clickDarken)) this.clickDarken = clickDarken;
+      const clickScale = parseFloat(styles.getPropertyValue('--tile-click-scale').trim());
+      if (!isNaN(clickScale)) this.clickScale = clickScale;
+      const clickDuration = parseFloat(styles.getPropertyValue('--tile-click-duration').trim());
+      if (!isNaN(clickDuration)) this.clickDuration = clickDuration;
 
-      this.observer = new IntersectionObserver(
-        (entries) => {
-          this.isVisible = entries[0].isIntersecting;
-          if (this.isVisible && this.needsRedraw) this.render();
-        },
-        { threshold: 0 }
-      );
-      this.observer.observe(this.canvas);
+      const bgLightHex = styles.getPropertyValue('--color-bg-light').trim();
+      const bgDarkHex = styles.getPropertyValue('--color-bg-dark').trim();
+      if (bgLightHex) this.bgLight = hexToRgb(bgLightHex);
+      if (bgDarkHex) this.bgDark = hexToRgb(bgDarkHex);
 
+      this.clickCounterEl = document.getElementById('tile-click-counter');
       this.init();
     }
 
     private init() {
-      this.resize();
-      window.addEventListener('resize', () => this.resize());
-      this.canvas.addEventListener('pointermove', (e) => this.onPointerMove(e));
-      this.canvas.addEventListener('pointerleave', () => this.onPointerLeave());
-
-      // Generate tiling (3 levels gives ~300 tiles, plenty for a margin)
-      this.tiles = generateHatTiling(3);
+      // Generate tiling first, then set up canvas
+      this.tiles = generateHatTiling(4);
+      this.setupCanvas();
       this.computeTransform();
-      this.render();
+      this.updateCardLeft();
+      this.scrollY = window.scrollY;
+
+      window.addEventListener('resize', () => {
+        this.setupCanvas();
+        this.computeTransform();
+        this.updateCardLeft();
+        this.scheduleRender();
+      });
+      window.addEventListener('scroll', () => {
+        this.scrollY = window.scrollY;
+        this.scheduleRender();
+      }, { passive: true });
+      document.addEventListener('pointermove', (e) => this.onPointerMove(e));
+      document.addEventListener('pointerdown', (e) => this.onPointerDown(e));
+      document.addEventListener('pointerup', () => this.onPointerUp());
+      document.addEventListener('pointerleave', () => this.onPointerLeave());
+
+      this.scheduleRender();
     }
 
-    private resize() {
-      const parent = this.canvas.parentElement;
-      if (!parent) return;
-      const rect = parent.getBoundingClientRect();
+    private setupCanvas() {
       const dpr = window.devicePixelRatio || 1;
-      this.canvas.width = rect.width * dpr;
-      this.canvas.height = rect.height * dpr;
-      this.canvas.style.width = rect.width + 'px';
-      this.canvas.style.height = rect.height + 'px';
+      const w = window.innerWidth;
+      const h = window.innerHeight;
+      this.canvas.width = w * dpr;
+      this.canvas.height = h * dpr;
+      this.canvas.style.width = w + 'px';
+      this.canvas.style.height = h + 'px';
       this.ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
-      this.computeTransform();
-      this.needsRedraw = true;
-      if (this.isVisible) this.render();
+    }
+
+    private updateCardLeft() {
+      const card = document.querySelector('.content-card');
+      if (card) this.cardLeft = card.getBoundingClientRect().left;
     }
 
     private computeTransform() {
       if (this.tiles.length === 0) return;
 
-      // Find bounding box of all tiles
       let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
       for (const tile of this.tiles) {
         for (const v of tile.vertices) {
@@ -92,99 +173,428 @@
 
       const tileW = maxX - minX;
       const tileH = maxY - minY;
-      const canvasW = this.canvas.width / (window.devicePixelRatio || 1);
-      const canvasH = this.canvas.height / (window.devicePixelRatio || 1);
+      const canvasW = window.innerWidth;
 
-      // Scale to fill height, overflow width is fine (will be clipped/faded)
-      this.scale = canvasH / tileH * 1.2;
+      // Scale: level 4 bounding box is ~2x level 3, so 3.8 ≈ 1.9×2 maintains same visual tile size.
+      const scaleX = canvasW / tileW;
+      const scaleY = window.innerHeight / tileH;
+      this.scale = Math.max(scaleX, scaleY) * 3.8 * this.tileSizeScale;
+
+      // Center horizontally in viewport
       this.offsetX = -minX * this.scale + (canvasW - tileW * this.scale) / 2;
-      this.offsetY = -minY * this.scale + (canvasH - tileH * this.scale) / 2;
+
+      // Center vertically over the full document height (for scroll coverage)
+      const totalH = document.documentElement.scrollHeight;
+      this.offsetY = -minY * this.scale + (totalH - tileH * this.scale) / 2;
     }
 
     private worldToScreen(p: { x: number; y: number }): { x: number; y: number } {
       return {
         x: p.x * this.scale + this.offsetX,
-        y: p.y * this.scale + this.offsetY,
+        y: p.y * this.scale + this.offsetY - this.scrollY,
       };
     }
 
     private screenToWorld(sx: number, sy: number): { x: number; y: number } {
       return {
         x: (sx - this.offsetX) / this.scale,
-        y: (sy - this.offsetY) / this.scale,
+        y: (sy + this.scrollY - this.offsetY) / this.scale,
       };
     }
 
-    private onPointerMove(e: PointerEvent) {
-      const rect = this.canvas.getBoundingClientRect();
-      const sx = e.clientX - rect.left;
-      const sy = e.clientY - rect.top;
-      const worldPt = this.screenToWorld(sx, sy);
+    /**
+     * Compute the background gradient color at a given screen position.
+     * Accounts for scroll: maps over full document height.
+     */
+    private getGradientColorAt(sx: number, sy: number): [number, number, number] {
+      const w = window.innerWidth;
+      const totalH = document.documentElement.scrollHeight;
+      const tx = 1 - (sx / w);
+      const ty = (sy + this.scrollY) / totalH;
+      const t = Math.max(0, Math.min(1, (tx + ty) / 2));
+      return lerpColor(this.bgLight, this.bgDark, t);
+    }
 
-      let found = -1;
-      // Check centroid distance first for performance, then exact test
+    /**
+     * Compute tile visibility alpha.
+     * Tiles only visible in the left margin (left of content card),
+     * with a smooth 80px fade near the card edge.
+     */
+    private getTileAlpha(sx: number): number {
+      if (sx >= this.cardLeft) return 0;
+      const fadeDistance = 80;
+      const dist = this.cardLeft - sx;
+      return dist < fadeDistance
+        ? this.outlineOpacity * (dist / fadeDistance)
+        : this.outlineOpacity;
+    }
+
+    /**
+     * Get the hover fade factor for a cooling tile (0 = expired, 1 = full highlight).
+     */
+    private getCoolingFactor(tileIndex: number): number {
+      const startTime = this.coolingTiles.get(tileIndex);
+      if (startTime === undefined) return 0;
+
+      const elapsed = (performance.now() - startTime) / 1000;
+      if (elapsed < this.hoverHold) return 1;
+      if (elapsed < this.hoverHold + this.hoverFade) {
+        return 1 - (elapsed - this.hoverHold) / this.hoverFade;
+      }
+      return 0;
+    }
+
+    /**
+     * Remove expired entries from the cooling map.
+     */
+    private cleanCoolingTiles() {
+      const now = performance.now();
+      const totalMs = (this.hoverHold + this.hoverFade) * 1000;
+      for (const [idx, time] of this.coolingTiles) {
+        if (now - time >= totalMs) {
+          this.coolingTiles.delete(idx);
+        }
+      }
+    }
+
+    private static readonly POP_UP_TIME = 0.04; // seconds — very fast snap
+
+    /**
+     * Quadratic ease-out: fast start, decelerating.
+     */
+    private easeOut(t: number): number {
+      const inv = 1 - t;
+      return 1 - inv * inv * inv; // cubic — snaps to full faster
+    }
+
+    /**
+     * Quadratic ease-in: slow start, accelerating.
+     */
+    private easeIn(t: number): number {
+      return t * t;
+    }
+
+    /**
+     * Get pop animation factor for a tile (0 = no pop, 1 = max pop).
+     * Three phases: scale-up (90ms ease-out), hold (while pressed), scale-down (clickDuration ease-in).
+     */
+    private getPopFactor(tileIndex: number): number {
+      const state = this.poppingTiles.get(tileIndex);
+      if (!state) return 0;
+
+      const now = performance.now();
+      const pressSec = (now - state.pressTime) / 1000;
+
+      // Phase 1: Scale up
+      if (pressSec < HatTilingRenderer.POP_UP_TIME) {
+        return this.easeOut(pressSec / HatTilingRenderer.POP_UP_TIME);
+      }
+
+      // Phase 2: Hold (still pressed, or scale-up just finished and not yet released)
+      if (state.releaseTime < 0) return 1;
+
+      // Phase 3: Scale down after release
+      const releaseSec = (now - state.releaseTime) / 1000;
+      if (releaseSec >= this.clickDuration) return 0;
+      return 1 - this.easeIn(releaseSec / this.clickDuration);
+    }
+
+    /**
+     * Scale screen-space vertices outward from centroid.
+     */
+    private scaleVertices(
+      verts: { x: number; y: number }[],
+      center: { x: number; y: number },
+      s: number
+    ): { x: number; y: number }[] {
+      return verts.map(v => ({
+        x: center.x + (v.x - center.x) * s,
+        y: center.y + (v.y - center.y) * s,
+      }));
+    }
+
+    /**
+     * Play a tiny synthesized pen-click sound.
+     */
+    private playClickSound() {
+      if (!this.audioCtx) {
+        this.audioCtx = new AudioContext();
+      }
+      const ctx = this.audioCtx;
+      const now = ctx.currentTime;
+
+      // Short noise burst shaped like a pen click
+      const duration = 0.008;
+      const bufferSize = Math.ceil(ctx.sampleRate * duration);
+      const buffer = ctx.createBuffer(1, bufferSize, ctx.sampleRate);
+      const data = buffer.getChannelData(0);
+      for (let i = 0; i < bufferSize; i++) {
+        const t = i / bufferSize;
+        // Sharp attack, fast decay envelope
+        const envelope = Math.exp(-t * 40);
+        data[i] = (Math.random() * 2 - 1) * envelope;
+      }
+
+      const source = ctx.createBufferSource();
+      source.buffer = buffer;
+
+      // Bandpass filter for a tighter "tick"
+      const filter = ctx.createBiquadFilter();
+      filter.type = 'bandpass';
+      filter.frequency.value = 3000;
+      filter.Q.value = 1.5;
+
+      const gain = ctx.createGain();
+      gain.gain.value = 0.06;
+
+      source.connect(filter);
+      filter.connect(gain);
+      gain.connect(ctx.destination);
+      source.start(now);
+    }
+
+    /**
+     * Remove expired pop animations, transfer to cooling for fade-out.
+     */
+    private cleanPoppingTiles() {
+      const now = performance.now();
+      const durationMs = this.clickDuration * 1000;
+      for (const [idx, state] of this.poppingTiles) {
+        // Only clean up tiles that have been released and finished animating
+        if (state.releaseTime >= 0 && now - state.releaseTime >= durationMs) {
+          this.coolingTiles.set(idx, now);
+          this.poppingTiles.delete(idx);
+        }
+      }
+    }
+
+    /**
+     * Batched rAF render. Keeps looping while any animation is active.
+     */
+    private scheduleRender() {
+      if (this.pendingRender) return;
+      this.pendingRender = true;
+      requestAnimationFrame(() => {
+        this.pendingRender = false;
+        this.cleanCoolingTiles();
+        this.cleanPoppingTiles();
+        this.render();
+        if (this.coolingTiles.size > 0 || this.poppingTiles.size > 0) {
+          this.scheduleRender();
+        }
+      });
+    }
+
+    /**
+     * Find the tile index at a given screen point, or -1 if none.
+     * Only checks tiles in the visible left-margin zone.
+     */
+    private findTileAtScreen(sx: number, sy: number): number {
+      if (this.getTileAlpha(sx) < 0.01) return -1;
+
+      const worldPt = this.screenToWorld(sx, sy);
       for (let i = 0; i < this.tiles.length; i++) {
         const tile = this.tiles[i];
         const dx = worldPt.x - tile.centroid.x;
         const dy = worldPt.y - tile.centroid.y;
-        if (dx * dx + dy * dy < 25) { // rough distance check
+        if (dx * dx + dy * dy < 25) {
           if (pointInPolygon(worldPt, tile.vertices)) {
-            found = i;
-            break;
+            return i;
           }
         }
       }
+      return -1;
+    }
+
+    /**
+     * Light up all tiles along a line segment between two screen points.
+     * Samples points along the line and adds unique tiles to the cooling set.
+     */
+    private interpolateTilesAlongLine(x0: number, y0: number, x1: number, y1: number) {
+      const dx = x1 - x0;
+      const dy = y1 - y0;
+      const dist = Math.sqrt(dx * dx + dy * dy);
+
+      // Sample every ~8 screen pixels along the line
+      const steps = Math.max(1, Math.ceil(dist / 8));
+      const now = performance.now();
+      const seen = new Set<number>();
+
+      for (let s = 0; s <= steps; s++) {
+        const t = s / steps;
+        const sx = x0 + dx * t;
+        const sy = y0 + dy * t;
+
+        const idx = this.findTileAtScreen(sx, sy);
+        if (idx !== -1 && !seen.has(idx)) {
+          seen.add(idx);
+          // Add to cooling (will show as trail), unless it's the current hover target
+          if (idx !== this.hoveredTile) {
+            this.coolingTiles.set(idx, now);
+          }
+        }
+      }
+    }
+
+    private onPointerMove(e: PointerEvent) {
+      const sx = e.clientX;
+      const sy = e.clientY;
+
+      // Interpolate tiles along the line from previous pointer position
+      if (this.lastPointerX >= 0 && this.lastPointerY >= 0) {
+        const dx = sx - this.lastPointerX;
+        const dy = sy - this.lastPointerY;
+        const dist = dx * dx + dy * dy;
+        // Only interpolate if we moved more than a few pixels
+        if (dist > 64) {
+          this.interpolateTilesAlongLine(this.lastPointerX, this.lastPointerY, sx, sy);
+        }
+      }
+      this.lastPointerX = sx;
+      this.lastPointerY = sy;
+
+      // Find the tile directly under the cursor
+      const found = this.findTileAtScreen(sx, sy);
 
       if (found !== this.hoveredTile) {
+        // Start cooling the old tile
+        if (this.hoveredTile !== -1) {
+          this.coolingTiles.set(this.hoveredTile, performance.now());
+        }
+        // If the new tile was cooling, pull it out (it's now active)
+        if (found !== -1) {
+          this.coolingTiles.delete(found);
+        }
         this.hoveredTile = found;
-        this.needsRedraw = true;
-        if (this.isVisible) this.render();
+        this.scheduleRender();
+      } else if (this.coolingTiles.size > 0) {
+        // Even if hovered tile didn't change, interpolation may have added new cooling tiles
+        this.scheduleRender();
       }
     }
 
     private onPointerLeave() {
       if (this.hoveredTile !== -1) {
+        this.coolingTiles.set(this.hoveredTile, performance.now());
         this.hoveredTile = -1;
-        this.needsRedraw = true;
-        if (this.isVisible) this.render();
       }
+      // Release held tile if pointer leaves the window
+      if (this.heldTile !== -1) {
+        const state = this.poppingTiles.get(this.heldTile);
+        if (state && state.releaseTime < 0) {
+          state.releaseTime = performance.now();
+        }
+        this.heldTile = -1;
+      }
+      this.lastPointerX = -1;
+      this.lastPointerY = -1;
+      this.scheduleRender();
+    }
+
+    private onPointerDown(e: PointerEvent) {
+      const idx = this.findTileAtScreen(e.clientX, e.clientY);
+      if (idx === -1) return;
+
+      // Release any previously held tile
+      if (this.heldTile !== -1 && this.heldTile !== idx) {
+        const prev = this.poppingTiles.get(this.heldTile);
+        if (prev && prev.releaseTime < 0) {
+          prev.releaseTime = performance.now();
+        }
+      }
+
+      // Subtle click sound
+      this.playClickSound();
+
+      // Easter egg: increment click counter
+      this.clickCount++;
+      if (this.clickCounterEl) {
+        this.clickCounterEl.textContent = String(this.clickCount);
+      }
+
+      // Start (or restart) the pop animation — held until pointerup
+      this.coolingTiles.delete(idx);
+      this.poppingTiles.set(idx, { pressTime: performance.now(), releaseTime: -1 });
+      this.heldTile = idx;
+      this.scheduleRender();
+    }
+
+    private onPointerUp() {
+      if (this.heldTile === -1) return;
+      const state = this.poppingTiles.get(this.heldTile);
+      if (state && state.releaseTime < 0) {
+        state.releaseTime = performance.now();
+      }
+      this.heldTile = -1;
+      this.scheduleRender();
     }
 
     private render() {
-      this.needsRedraw = false;
       const ctx = this.ctx;
-      const canvasW = this.canvas.width / (window.devicePixelRatio || 1);
-      const canvasH = this.canvas.height / (window.devicePixelRatio || 1);
+      const canvasW = window.innerWidth;
+      const canvasH = window.innerHeight;
 
       ctx.clearRect(0, 0, canvasW, canvasH);
 
-      // Create a horizontal fade gradient for the alpha mask
-      // Full opacity on left, fading out toward right
-      const fadeStart = canvasW * 0.6;
-      const fadeEnd = canvasW * 0.95;
+      // Pre-compute popping tile data for clip exclusion + Pass 2
+      const popData: Array<{
+        i: number;
+        screenCentroid: { x: number; y: number };
+        alpha: number;
+        popFactor: number;
+        scaledVerts: { x: number; y: number }[];
+      }> = [];
 
+      if (this.poppingTiles.size > 0) {
+        for (const [i] of this.poppingTiles) {
+          const tile = this.tiles[i];
+          const screenCentroid = this.worldToScreen(tile.centroid);
+          const alpha = this.getTileAlpha(screenCentroid.x);
+          const popFactor = this.getPopFactor(i);
+          if (alpha < 0.01 || popFactor < 0.001) continue;
+          const currentScale = 1 + (this.clickScale - 1) * popFactor;
+          const screenVerts = tile.vertices.map(v => this.worldToScreen(v));
+          const scaledVerts = this.scaleVertices(screenVerts, screenCentroid, currentScale);
+          popData.push({ i, screenCentroid, alpha, popFactor, scaledVerts });
+        }
+      }
+
+      // Set up clip exclusion: canvas rect with pop polygon holes (evenodd).
+      // This prevents Pass 1 outlines from being drawn inside pop regions.
+      if (popData.length > 0) {
+        ctx.save();
+        ctx.beginPath();
+        ctx.rect(0, 0, canvasW, canvasH);
+        for (const pop of popData) {
+          const verts = pop.scaledVerts;
+          ctx.moveTo(verts[verts.length - 1].x, verts[verts.length - 1].y);
+          for (let j = verts.length - 2; j >= 0; j--) {
+            ctx.lineTo(verts[j].x, verts[j].y);
+          }
+          ctx.closePath();
+        }
+        ctx.clip('evenodd');
+      }
+
+      // ─── Pass 1: Regular tiles (clipped around pop regions) ───
       for (let i = 0; i < this.tiles.length; i++) {
         const tile = this.tiles[i];
-        const screenVerts = tile.vertices.map(v => this.worldToScreen(v));
 
-        // Check if tile is visible on canvas
-        const xs = screenVerts.map(v => v.x);
-        const maxTileX = Math.max(...xs);
-        const minTileX = Math.min(...xs);
-        if (maxTileX < 0 || minTileX > canvasW) continue;
-        const ys = screenVerts.map(v => v.y);
-        if (Math.max(...ys) < 0 || Math.min(...ys) > canvasH) continue;
-
-        // Compute fade based on tile centroid X position
+        // Early cull: check centroid before transforming all vertices
         const screenCentroid = this.worldToScreen(tile.centroid);
-        let alpha = this.outlineOpacity;
-        if (screenCentroid.x > fadeStart) {
-          alpha *= Math.max(0, 1 - (screenCentroid.x - fadeStart) / (fadeEnd - fadeStart));
-        }
+        if (screenCentroid.x > this.cardLeft + 50) continue;
+        if (screenCentroid.y < -100 || screenCentroid.y > canvasH + 100) continue;
 
+        const alpha = this.getTileAlpha(screenCentroid.x);
         if (alpha < 0.01) continue;
 
+        // Skip popping tiles in Pass 1 — Pass 2 handles them
+        if (this.poppingTiles.has(i)) continue;
+
+        const screenVerts = tile.vertices.map(v => this.worldToScreen(v));
+
         const isHovered = i === this.hoveredTile;
+        const coolingFactor = this.getCoolingFactor(i);
 
         ctx.beginPath();
         ctx.moveTo(screenVerts[0].x, screenVerts[0].y);
@@ -193,9 +603,13 @@
         }
         ctx.closePath();
 
-        if (isHovered) {
-          // Fill with slightly darker version of the background
-          ctx.fillStyle = `rgba(0, 0, 0, ${this.hoverDarken})`;
+        // Hover highlight (active or fading trail)
+        if (isHovered || coolingFactor > 0) {
+          const bgColor = this.getGradientColorAt(screenCentroid.x, screenCentroid.y);
+          const darkened = darkenColor(bgColor, this.hoverDarken);
+          const hoverAlpha = alpha / this.outlineOpacity;
+          const factor = isHovered ? 1 : coolingFactor;
+          ctx.fillStyle = `rgba(${darkened[0]}, ${darkened[1]}, ${darkened[2]}, ${hoverAlpha * 0.5 * factor})`;
           ctx.fill();
         }
 
@@ -205,15 +619,40 @@
         ctx.stroke();
         ctx.globalAlpha = 1;
       }
-    }
 
-    destroy() {
-      this.observer.disconnect();
-      cancelAnimationFrame(this.animFrame);
+      // Restore clip
+      if (popData.length > 0) {
+        ctx.restore();
+      }
+
+      // ─── Pass 2: Popping tiles (drawn into clean area) ───
+      for (const pop of popData) {
+        const { scaledVerts, screenCentroid, alpha, popFactor } = pop;
+
+        ctx.beginPath();
+        ctx.moveTo(scaledVerts[0].x, scaledVerts[0].y);
+        for (let j = 1; j < scaledVerts.length; j++) {
+          ctx.lineTo(scaledVerts[j].x, scaledVerts[j].y);
+        }
+        ctx.closePath();
+
+        // Opaque fill — gradient-matched, darkened
+        const bgColor = this.getGradientColorAt(screenCentroid.x, screenCentroid.y);
+        const darkened = darkenColor(bgColor, this.clickDarken * popFactor);
+        ctx.fillStyle = `rgb(${darkened[0]}, ${darkened[1]}, ${darkened[2]})`;
+        ctx.globalAlpha = alpha / this.outlineOpacity;
+        ctx.fill();
+
+        // Outline on top
+        ctx.strokeStyle = this.outlineColor;
+        ctx.globalAlpha = alpha;
+        ctx.lineWidth = 0.5;
+        ctx.stroke();
+        ctx.globalAlpha = 1;
+      }
     }
   }
 
-  // Initialize when DOM is ready
   const canvas = document.getElementById('hat-tiling-canvas') as HTMLCanvasElement;
   if (canvas) {
     new HatTilingRenderer(canvas);
@@ -221,11 +660,30 @@
 </script>
 
 <style>
-  .hat-tiling {
-    position: absolute;
+  .hat-tiling-bg {
+    position: fixed;
     inset: 0;
-    width: 100%;
-    height: 100%;
-    pointer-events: auto;
+    width: 100vw;
+    height: 100vh;
+    z-index: 0;
+    pointer-events: none;
+  }
+
+  .tile-click-counter {
+    position: fixed;
+    top: 12px;
+    right: 14px;
+    z-index: 10;
+    font-family: var(--font-body);
+    font-size: 1.15rem;
+    color: var(--color-text-primary);
+    opacity: 0.25;
+    pointer-events: none;
+    user-select: none;
+    line-height: 1;
+  }
+
+  .tile-click-counter:empty {
+    display: none;
   }
 </style>

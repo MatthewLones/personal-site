@@ -23,10 +23,38 @@
   /* ═══════════════════════════════════════════
      Monotile Tiling
      ═══════════════════════════════════════════ */
-  --color-tile-outline: #939391;
+  --tile-outline-color: #2a3020;
   --tile-outline-width: 0.5;
   --tile-outline-opacity: 0.35;
   --tile-hover-darken: 0.08;
+  --tile-hover-hold: 0.3;
+  --tile-hover-fade: 0.7;
+  --tile-size-scale: 1;
+  --tile-click-darken: 0.15;
+  --tile-click-scale: 1.15;
+  --tile-click-duration: 0.15;
+
+  /* ═══════════════════════════════════════════
+     Vector Field (right margin interactive)
+     An organic blob of small arrows with spring physics.
+     Shape is procedurally generated each page load.
+     ═══════════════════════════════════════════ */
+  --vf-arrow-color: #3a3020;
+  --vf-arrow-length: 10;
+  --vf-arrow-head-size: 3;
+  --vf-arrow-width: 1;
+  --vf-grid-spacing: 12;
+  --vf-field-radius: 250;
+  --vf-influence-radius: 70;
+  --vf-spring-k: 200;
+  --vf-damping: 22;
+  --vf-push-contact: 4;
+  --vf-push-strength: 0.8;
+  --vf-ball-radius: 3;
+  --vf-ball-color: #3a3020;
+  --vf-ball-speed: 120;
+  --vf-ball-gravity: 500;
+  --vf-ball-trail: 8;
 
   /* ═══════════════════════════════════════════
      Glassmorphic Bento Boxes
@@ -46,10 +74,19 @@
      Subtle crusty noise across the viewport.
      Heavier on sides, lighter in center for legibility.
      ═══════════════════════════════════════════ */
-  --grain-opacity: 0.06;
+  --grain-opacity: 0.1;
   --grain-opacity-center: 0.02;
   --grain-base-frequency: 0.65;
   --grain-mask-center-opacity: 0.3;
+
+  /* ═══════════════════════════════════════════
+     Content Card (glass panel over the tiling)
+     The main text/UI lives here, on top of the
+     full-page monotile background.
+     ═══════════════════════════════════════════ */
+  --content-card-bg: transparent;
+  --content-card-blur: 8px;
+  --content-card-border: transparent;
 
   /* ═══════════════════════════════════════════
      Layout Proportions
