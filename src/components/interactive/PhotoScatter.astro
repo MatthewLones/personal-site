@@ -1,0 +1,181 @@
+---
+const photos = [
+  { src: '/photos/about/dog-1.jpg', alt: 'Photo 1' },
+  { src: '/photos/about/dog-2.jpg', alt: 'Photo 2' },
+  { src: '/photos/about/dog-3.jpg', alt: 'Photo 3' },
+  { src: '/photos/about/dog-4.jpg', alt: 'Photo 4' },
+  { src: '/photos/about/dog-5.jpg', alt: 'Photo 5' },
+  { src: '/photos/about/dog-6.jpg', alt: 'Photo 6' },
+];
+---
+
+<div class="ps-container">
+  <div class="ps-box" id="ps-box">
+    {photos.map((photo, i) => (
+      <div class="ps-photo" data-index={i}>
+        <img src={photo.src} alt={photo.alt} draggable="false" />
+      </div>
+    ))}
+  </div>
+</div>
+
+<style>
+  .ps-container {
+    width: 100%;
+    margin-top: var(--ps-box-margin-top);
+    padding: 0 1rem;
+  }
+
+  .ps-box {
+    position: relative;
+    width: 100%;
+    aspect-ratio: 4 / 3;
+    overflow: visible;
+  }
+
+  .ps-photo {
+    position: absolute;
+    cursor: grab;
+    user-select: none;
+    -webkit-user-select: none;
+    touch-action: none;
+    will-change: transform;
+    opacity: 0;
+  }
+
+  .ps-box.ready .ps-photo {
+    opacity: 1;
+  }
+
+  .ps-photo img {
+    display: block;
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+    border-radius: var(--ps-photo-radius);
+    box-shadow: var(--ps-photo-shadow);
+    pointer-events: none;
+  }
+
+  .ps-photo.is-dragging {
+    cursor: grabbing;
+  }
+
+  .ps-photo.is-dragging img {
+    box-shadow: var(--ps-photo-shadow-lifted);
+  }
+</style>
+
+<script>
+  class PhotoScatterController {
+    private box: HTMLElement;
+    private photos: HTMLElement[];
+    private photoMinSize = 90;
+    private photoMaxSize = 140;
+    private dragging: HTMLElement | null = null;
+    private dragOffsetX = 0;
+    private dragOffsetY = 0;
+    private nextZ = 10;
+
+    constructor(box: HTMLElement) {
+      this.box = box;
+      this.photos = Array.from(box.querySelectorAll<HTMLElement>('.ps-photo'));
+      this.readTokens();
+      this.layout();
+      this.bindEvents();
+    }
+
+    private readTokens(): void {
+      const s = getComputedStyle(document.documentElement);
+      const num = (name: string, fallback: number) => {
+        const v = parseFloat(s.getPropertyValue(name).trim());
+        return isNaN(v) ? fallback : v;
+      };
+      this.photoMinSize = num('--ps-photo-min-size', 90);
+      this.photoMaxSize = num('--ps-photo-max-size', 140);
+    }
+
+    private layout(): void {
+      const boxW = this.box.clientWidth;
+      const boxH = this.box.clientHeight;
+      if (boxW === 0 || boxH === 0) return;
+
+      const zOrders = this.photos.map((_, i) => i + 1);
+      this.shuffleArray(zOrders);
+
+      this.photos.forEach((photo, i) => {
+        const size = this.randomBetween(this.photoMinSize, this.photoMaxSize);
+        const angle = this.randomBetween(-12, 12);
+        const margin = size / 2 + 8;
+        const x = this.randomBetween(margin, Math.max(margin, boxW - margin)) - size / 2;
+        const y = this.randomBetween(margin, Math.max(margin, boxH - margin)) - size / 2;
+
+        photo.style.width = `${size}px`;
+        photo.style.height = `${size}px`;
+        photo.style.left = `${x}px`;
+        photo.style.top = `${y}px`;
+        photo.style.transform = `rotate(${angle}deg)`;
+        photo.style.zIndex = String(zOrders[i]);
+      });
+
+      this.box.classList.add('ready');
+    }
+
+    private bindEvents(): void {
+      this.photos.forEach(photo => {
+        photo.addEventListener('pointerdown', (e) => this.onPointerDown(e, photo));
+      });
+      window.addEventListener('pointermove', (e) => this.onPointerMove(e));
+      window.addEventListener('pointerup', () => this.onPointerUp());
+    }
+
+    private onPointerDown(e: PointerEvent, photo: HTMLElement): void {
+      e.preventDefault();
+      photo.setPointerCapture(e.pointerId);
+
+      this.nextZ++;
+      photo.style.zIndex = String(this.nextZ);
+
+      const rect = photo.getBoundingClientRect();
+      this.dragOffsetX = e.clientX - rect.left;
+      this.dragOffsetY = e.clientY - rect.top;
+
+      photo.classList.add('is-dragging');
+      this.dragging = photo;
+    }
+
+    private onPointerMove(e: PointerEvent): void {
+      if (!this.dragging) return;
+
+      const boxRect = this.box.getBoundingClientRect();
+
+      const newLeft = e.clientX - boxRect.left - this.dragOffsetX;
+      const newTop = e.clientY - boxRect.top - this.dragOffsetY;
+
+      this.dragging.style.left = `${newLeft}px`;
+      this.dragging.style.top = `${newTop}px`;
+    }
+
+    private onPointerUp(): void {
+      if (!this.dragging) return;
+      this.dragging.classList.remove('is-dragging');
+      this.dragging = null;
+    }
+
+    private randomBetween(min: number, max: number): number {
+      return min + Math.random() * (max - min);
+    }
+
+    private shuffleArray<T>(arr: T[]): void {
+      for (let i = arr.length - 1; i > 0; i--) {
+        const j = Math.floor(Math.random() * (i + 1));
+        [arr[i], arr[j]] = [arr[j], arr[i]];
+      }
+    }
+  }
+
+  const box = document.getElementById('ps-box');
+  if (box) {
+    new PhotoScatterController(box);
+  }
+</script>

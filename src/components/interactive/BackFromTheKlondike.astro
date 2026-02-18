@@ -1,0 +1,719 @@
+---
+/**
+ * Back From The Klondike — Sam Loyd's 1898 Jump Maze
+ * Start at the heart in the center. Each cell's number tells you
+ * how many steps to jump in one of 8 directions. Escape by
+ * landing exactly on a border cell.
+ */
+---
+
+<div class="bfk-container">
+  <canvas id="bfk-canvas" class="bfk-canvas" tabindex="0"></canvas>
+  <div class="bfk-controls">
+    <div class="bfk-mode-bar">
+      <button class="bfk-btn" id="bfk-undo">undo</button>
+      <button class="bfk-btn" id="bfk-reset">reset</button>
+      <button class="bfk-btn" id="bfk-help">?</button>
+    </div>
+    <span class="bfk-move-counter" id="bfk-moves">moves: 0</span>
+  </div>
+
+  <dialog id="bfk-overlay" class="bfk-overlay">
+    <div class="bfk-overlay-inner">
+      <button class="bfk-overlay-close" id="bfk-overlay-close" aria-label="Close">&times;</button>
+
+      <h2 class="bfk-overlay-title">Back From The Klondike</h2>
+
+      <p>
+        In 1898, puzzle inventor Sam Loyd published a maze in the
+        <em>New York Journal</em> that he claimed was specifically designed to
+        defeat <strong>Leonhard Euler's method</strong> for solving mazes.
+      </p>
+      <p>
+        Euler's technique — working backward from the exit — exploits the
+        continuous topology of traditional wall-based mazes. Loyd circumvented
+        this by inventing the <strong>jump maze</strong>: movement is determined
+        by arithmetic (jump <em>N</em> steps in a direction), not by walls and
+        corridors. Working backward from the border tells you nothing useful,
+        because many interior cells can reach the exit.
+      </p>
+
+      <h3>The Rules</h3>
+      <p>
+        Start at the heart in the center (value 3). Each cell shows a number —
+        that's how many steps you must jump in a straight line, in any of
+        <strong>8 compass directions</strong> (N, NE, E, SE, S, SW, W, NW).
+        You win by landing exactly on a border cell.
+      </p>
+
+      <h3>The Artist's Error</h3>
+      <p>
+        In 1976, two graduate students at the University of Washington wrote
+        a Fortran program to solve Loyd's puzzle and discovered
+        <strong>hundreds of possible solutions</strong>. All solutions converged
+        through a particular cell that wasn't part of Loyd's published answer —
+        suggesting an artist's error in the original drawing. When one cell is
+        corrected (from 2 to 1), the puzzle has a <strong>unique solution</strong>.
+      </p>
+
+      <h3>The Math</h3>
+      <p>
+        The puzzle creates an <em>implicit directed graph</em>: each numbered
+        cell is a node, and each possible jump creates a directed edge. Finding
+        the solution is a graph traversal problem — but the graph's structure
+        (determined by arithmetic on cell values) makes backward search
+        ineffective. The state space is finite but branching, requiring
+        depth-first exploration.
+      </p>
+      <p>
+        Loyd's puzzle is one of the earliest examples of a problem designed to
+        be computationally resistant — 75 years before computers were used to
+        crack it.
+      </p>
+    </div>
+  </dialog>
+</div>
+
+<style>
+  .bfk-container {
+    position: relative;
+    width: fit-content;
+  }
+
+  .bfk-canvas {
+    display: block;
+    outline: none;
+  }
+
+  .bfk-controls {
+    display: flex;
+    align-items: center;
+    gap: 0.75rem;
+    margin-top: 0.5rem;
+    opacity: var(--bfk-controls-opacity, 0.3);
+    transition: opacity 0.3s;
+  }
+
+  .bfk-controls:hover,
+  .bfk-controls:focus-within {
+    opacity: var(--bfk-controls-hover-opacity, 0.7);
+  }
+
+  .bfk-mode-bar {
+    display: flex;
+    gap: 1px;
+    border: 1px solid var(--bfk-border-color, #3a3020);
+    border-radius: 4px;
+    overflow: hidden;
+  }
+
+  .bfk-btn {
+    font-family: var(--font-mono);
+    font-size: 0.6rem;
+    color: var(--bfk-border-color, #3a3020);
+    background: transparent;
+    border: none;
+    border-right: 1px solid var(--bfk-border-color, #3a3020);
+    padding: 3px 8px;
+    cursor: pointer;
+    line-height: 1;
+    transition: background 0.15s, color 0.15s;
+  }
+
+  .bfk-btn:last-child {
+    border-right: none;
+  }
+
+  .bfk-btn:hover {
+    background: var(--bfk-border-color, #3a3020);
+    color: var(--color-bg-light, #BCC6AF);
+  }
+
+  .bfk-move-counter {
+    font-family: var(--font-mono);
+    font-size: 0.55rem;
+    color: var(--bfk-border-color, #3a3020);
+    line-height: 1;
+  }
+
+  /* ─── Overlay ───────────────────────────────── */
+
+  .bfk-overlay {
+    border: none;
+    border-radius: 16px;
+    background: var(--bfk-overlay-bg, #adb99f);
+    color: var(--color-text-primary, #252525);
+    max-width: var(--bfk-overlay-max-width, 760px);
+    width: calc(100% - 3rem);
+    height: calc(100vh - 3rem);
+    margin: auto;
+    padding: 0;
+    overflow: hidden;
+    box-shadow: 0 12px 48px rgba(0, 0, 0, 0.3);
+  }
+
+  .bfk-overlay::backdrop {
+    background: rgba(0, 0, 0, 0.35);
+    backdrop-filter: blur(4px);
+  }
+
+  .bfk-overlay-inner {
+    padding: 2.5rem 3rem 3rem;
+    overflow-y: auto;
+    height: 100%;
+    box-sizing: border-box;
+    scrollbar-width: none;
+    -ms-overflow-style: none;
+  }
+
+  .bfk-overlay-inner::-webkit-scrollbar {
+    display: none;
+  }
+
+  .bfk-overlay-close {
+    position: absolute;
+    top: 1rem;
+    right: 1.25rem;
+    background: none;
+    border: none;
+    color: var(--color-text-primary, #252525);
+    font-size: 1.5rem;
+    cursor: pointer;
+    opacity: 0.35;
+    transition: opacity 0.2s;
+    line-height: 1;
+  }
+
+  .bfk-overlay-close:hover {
+    opacity: 0.8;
+  }
+
+  .bfk-overlay-title {
+    font-family: var(--font-heading, serif);
+    font-size: 1.6rem;
+    font-weight: 700;
+    margin: 0 0 1.25rem;
+    color: var(--color-text-primary, #252525);
+  }
+
+  .bfk-overlay-inner > p {
+    font-family: var(--font-body, serif);
+    font-size: 0.9rem;
+    line-height: 1.75;
+    margin: 0 0 0.9rem;
+    color: var(--color-text-primary, #252525);
+  }
+
+  .bfk-overlay-inner > h3 {
+    font-family: var(--font-heading, serif);
+    font-size: 1.1rem;
+    font-weight: 700;
+    color: var(--color-text-primary, #252525);
+    margin: 2rem 0 0.6rem;
+  }
+
+  @media (max-width: 500px) {
+    .bfk-overlay {
+      width: calc(100% - 1.5rem);
+      height: calc(100vh - 1.5rem);
+      border-radius: 12px;
+    }
+
+    .bfk-overlay-inner {
+      padding: 1.5rem 1.25rem 2rem;
+    }
+  }
+</style>
+
+<script>
+  import {
+    type KlondikeState,
+    type ValidMove,
+    type Pos,
+    createState,
+    getValidMoves,
+    makeMove,
+    undoMove,
+    resetPuzzle,
+    canUndo,
+    hitTestCell,
+  } from '../../lib/klondike';
+  import {
+    type ConfettiParticle,
+    spawnConfetti,
+    stepConfetti,
+  } from '../../lib/lights-out';
+
+  interface Tokens {
+    cellSize: number;
+    cellRadius: number;
+    cellColor: string;
+    numberColor: string;
+    borderCellColor: string;
+    borderCellOpacity: number;
+    currentColor: string;
+    visitedColor: string;
+    pathColor: string;
+    pathOpacity: number;
+    pathWidth: number;
+    targetColor: string;
+    targetOpacity: number;
+    heartColor: string;
+    confettiCount: number;
+    confettiGravity: number;
+    confettiSpread: number;
+  }
+
+  class KlondikeRenderer {
+    private canvas: HTMLCanvasElement;
+    private ctx: CanvasRenderingContext2D;
+    private state: KlondikeState;
+    private tokens!: Tokens;
+    private padding = 12;
+    private dpr = 1;
+    private validMoves: ValidMove[] = [];
+    private confetti: ConfettiParticle[] = [];
+    private winShown = false;
+    private lastTime = 0;
+    private animating = false;
+    private pressedKeys = new Set<string>();
+    private moveTimer: number | null = null;
+
+    constructor(
+      canvas: HTMLCanvasElement,
+      private moveCounter: HTMLElement,
+    ) {
+      this.canvas = canvas;
+      this.ctx = canvas.getContext('2d')!;
+      this.readTokens();
+      this.state = createState();
+      this.validMoves = getValidMoves(this.state);
+      this.setupCanvas();
+      this.render();
+      this.canvas.addEventListener('pointerdown', (e) => {
+        this.canvas.focus();
+        this.onPointerDown(e);
+      });
+      this.canvas.addEventListener('pointermove', (e) => this.onPointerMove(e));
+      this.canvas.addEventListener('keydown', (e) => this.onKeyDown(e));
+      this.canvas.addEventListener('keyup', (e) => this.onKeyUp(e));
+    }
+
+    private readTokens() {
+      const s = getComputedStyle(document.documentElement);
+      const g = (v: string, fb: string) => s.getPropertyValue(v).trim() || fb;
+      const n = (v: string, fb: number) => parseFloat(g(v, String(fb))) || fb;
+      this.tokens = {
+        cellSize: n('--bfk-cell-size', 22),
+        cellRadius: parseFloat(g('--bfk-cell-radius', '4')),
+        cellColor: g('--bfk-cell-color', '#2e2a22'),
+        numberColor: g('--bfk-number-color', '#f0e8d8'),
+        borderCellColor: g('--bfk-border-cell-color', '#3a3020'),
+        borderCellOpacity: n('--bfk-border-cell-opacity', 0.15),
+        currentColor: g('--bfk-current-color', '#c47a2a'),
+        visitedColor: g('--bfk-visited-color', '#5a4a30'),
+        pathColor: g('--bfk-path-color', '#c47a2a'),
+        pathOpacity: n('--bfk-path-opacity', 0.4),
+        pathWidth: n('--bfk-path-width', 1.5),
+        targetColor: g('--bfk-target-color', '#c47a2a'),
+        targetOpacity: n('--bfk-target-opacity', 0.3),
+        heartColor: g('--bfk-heart-color', '#c47a2a'),
+        confettiCount: n('--lo-confetti-count', 60),
+        confettiGravity: n('--lo-confetti-gravity', 400),
+        confettiSpread: n('--lo-confetti-spread', 300),
+      };
+    }
+
+    private setupCanvas() {
+      const { cellSize } = this.tokens;
+      const w = this.state.cols * cellSize + this.padding * 2;
+      const h = this.state.rows * cellSize + this.padding * 2;
+      this.dpr = window.devicePixelRatio || 1;
+      this.canvas.width = w * this.dpr;
+      this.canvas.height = h * this.dpr;
+      this.canvas.style.width = w + 'px';
+      this.canvas.style.height = h + 'px';
+      this.ctx.setTransform(this.dpr, 0, 0, this.dpr, 0, 0);
+    }
+
+    private cellCenter(row: number, col: number): { x: number; y: number } {
+      const { cellSize } = this.tokens;
+      return {
+        x: this.padding + col * cellSize + cellSize / 2,
+        y: this.padding + row * cellSize + cellSize / 2,
+      };
+    }
+
+    private render() {
+      const { ctx, tokens, state, padding } = this;
+      const { cellSize } = tokens;
+      const w = state.cols * cellSize + padding * 2;
+      const h = state.rows * cellSize + padding * 2;
+
+      ctx.clearRect(0, 0, w, h);
+
+      const monoFont = getComputedStyle(document.documentElement)
+        .getPropertyValue('--font-mono')
+        .trim() || 'monospace';
+
+      // Visited cells set for quick lookup
+      const visitedSet = new Set<string>();
+      for (const p of state.path) {
+        visitedSet.add(`${p.row},${p.col}`);
+      }
+
+      // Valid move targets set
+      const targetSet = new Set<string>();
+      for (const m of this.validMoves) {
+        targetSet.add(`${m.target.row},${m.target.col}`);
+      }
+
+      // Draw cells
+      for (let r = 0; r < state.rows; r++) {
+        for (let c = 0; c < state.cols; c++) {
+          const cell = state.grid[r][c];
+          if (cell.kind === 'empty') continue;
+
+          const { x, y } = this.cellCenter(r, c);
+          const half = cellSize / 2 - 1;
+
+          if (cell.kind === 'border') {
+            // Border/exit cells: olive fill
+            ctx.save();
+            ctx.globalAlpha = tokens.borderCellOpacity;
+            ctx.fillStyle = tokens.borderCellColor;
+            ctx.beginPath();
+            ctx.roundRect(x - half, y - half, half * 2, half * 2, tokens.cellRadius);
+            ctx.fill();
+            ctx.restore();
+
+            // Highlight border cells that are valid targets
+            if (targetSet.has(`${r},${c}`)) {
+              ctx.save();
+              ctx.fillStyle = tokens.targetColor;
+              ctx.globalAlpha = 0.2;
+              ctx.beginPath();
+              ctx.roundRect(x - half - 2, y - half - 2, half * 2 + 4, half * 2 + 4, tokens.cellRadius + 1);
+              ctx.fill();
+              ctx.strokeStyle = tokens.targetColor;
+              ctx.globalAlpha = 0.7;
+              ctx.lineWidth = 2;
+              ctx.setLineDash([3, 3]);
+              ctx.beginPath();
+              ctx.roundRect(x - half - 2, y - half - 2, half * 2 + 4, half * 2 + 4, tokens.cellRadius + 1);
+              ctx.stroke();
+              ctx.restore();
+            }
+            continue;
+          }
+
+          // Number cells
+          const isCurrent = r === state.currentPos.row && c === state.currentPos.col;
+          const isVisited = visitedSet.has(`${r},${c}`);
+          const isTarget = targetSet.has(`${r},${c}`);
+
+          // Cell background
+          let fillColor = tokens.cellColor;
+          if (isCurrent) fillColor = tokens.currentColor;
+          else if (isVisited) fillColor = tokens.visitedColor;
+
+          ctx.beginPath();
+          ctx.roundRect(x - half, y - half, half * 2, half * 2, tokens.cellRadius);
+          ctx.fillStyle = fillColor;
+          ctx.fill();
+
+          // Valid move target highlight — fill + ring so it's clearly clickable
+          if (isTarget && !isCurrent) {
+            ctx.save();
+            // Subtle fill behind the cell
+            ctx.fillStyle = tokens.targetColor;
+            ctx.globalAlpha = 0.15;
+            ctx.beginPath();
+            ctx.roundRect(x - half - 2, y - half - 2, half * 2 + 4, half * 2 + 4, tokens.cellRadius + 1);
+            ctx.fill();
+            // Dashed ring
+            ctx.strokeStyle = tokens.targetColor;
+            ctx.globalAlpha = 0.6;
+            ctx.lineWidth = 1.5;
+            ctx.setLineDash([3, 3]);
+            ctx.beginPath();
+            ctx.roundRect(x - half - 2, y - half - 2, half * 2 + 4, half * 2 + 4, tokens.cellRadius + 1);
+            ctx.stroke();
+            ctx.restore();
+          }
+
+          // Start cell ring (always visible so you know where home is)
+          if (r === 11 && c === 11) {
+            ctx.save();
+            ctx.strokeStyle = tokens.heartColor;
+            ctx.globalAlpha = 0.5;
+            ctx.lineWidth = 1.5;
+            ctx.beginPath();
+            ctx.roundRect(x - half - 2, y - half - 2, half * 2 + 4, half * 2 + 4, tokens.cellRadius + 1);
+            ctx.stroke();
+            ctx.restore();
+          }
+
+          // Number text
+          ctx.fillStyle = tokens.numberColor;
+          ctx.font = `bold ${Math.round(cellSize * 0.5)}px ${monoFont}`;
+          ctx.textAlign = 'center';
+          ctx.textBaseline = 'middle';
+          ctx.fillText(String(cell.value), x, y + 0.5);
+        }
+      }
+
+      // Draw path lines
+      if (state.path.length > 1) {
+        ctx.save();
+        ctx.strokeStyle = tokens.pathColor;
+        ctx.globalAlpha = tokens.pathOpacity;
+        ctx.lineWidth = tokens.pathWidth;
+        ctx.lineCap = 'round';
+        ctx.lineJoin = 'round';
+        ctx.beginPath();
+        const p0 = this.cellCenter(state.path[0].row, state.path[0].col);
+        ctx.moveTo(p0.x, p0.y);
+        for (let i = 1; i < state.path.length; i++) {
+          const pi = this.cellCenter(state.path[i].row, state.path[i].col);
+          ctx.lineTo(pi.x, pi.y);
+        }
+        ctx.stroke();
+        ctx.restore();
+      }
+
+      // Confetti
+      for (const p of this.confetti) {
+        if (p.life <= 0) continue;
+        ctx.save();
+        ctx.globalAlpha = Math.max(0, p.life);
+        ctx.translate(p.x, p.y);
+        ctx.rotate(p.angle);
+        ctx.fillStyle = p.color;
+        ctx.fillRect(-p.w / 2, -p.h / 2, p.w, p.h);
+        ctx.restore();
+      }
+
+      // Win text — positioned below the diamond grid
+      if (state.solved && this.winShown) {
+        ctx.save();
+        const label = 'escaped!';
+        ctx.font = `bold 1.2rem ${monoFont}`;
+        const textW = ctx.measureText(label).width;
+        const pillPadX = 12;
+        const pillPadY = 5;
+        const pillW = textW + pillPadX * 2;
+        const pillH = 18 + pillPadY * 2;
+        const pillX = w / 2 - pillW / 2;
+        const pillY = h - this.padding - pillH + 2;
+
+        // Backdrop pill
+        ctx.globalAlpha = 0.75;
+        ctx.fillStyle = tokens.currentColor;
+        ctx.beginPath();
+        ctx.roundRect(pillX, pillY, pillW, pillH, pillH / 2);
+        ctx.fill();
+
+        // Text
+        ctx.globalAlpha = 1;
+        ctx.fillStyle = tokens.numberColor;
+        ctx.textAlign = 'center';
+        ctx.textBaseline = 'middle';
+        ctx.fillText(label, w / 2, pillY + pillH / 2);
+        ctx.restore();
+      }
+    }
+
+    private onPointerDown(e: PointerEvent) {
+      if (this.state.solved) return;
+
+      const rect = this.canvas.getBoundingClientRect();
+      const px = e.clientX - rect.left;
+      const py = e.clientY - rect.top;
+
+      const hit = hitTestCell(
+        px,
+        py,
+        this.tokens.cellSize,
+        this.padding,
+        this.state.rows,
+        this.state.cols,
+      );
+
+      if (!hit) return;
+
+      // Check if the clicked cell is a valid move target
+      for (const move of this.validMoves) {
+        if (move.target.row === hit.row && move.target.col === hit.col) {
+          this.doMove(move.dir);
+          return;
+        }
+      }
+    }
+
+    private onPointerMove(e: PointerEvent) {
+      if (this.state.solved) {
+        this.canvas.style.cursor = 'default';
+        return;
+      }
+      const rect = this.canvas.getBoundingClientRect();
+      const px = e.clientX - rect.left;
+      const py = e.clientY - rect.top;
+      const hit = hitTestCell(
+        px, py, this.tokens.cellSize, this.padding,
+        this.state.rows, this.state.cols,
+      );
+      if (hit) {
+        const isTarget = this.validMoves.some(
+          (m) => m.target.row === hit.row && m.target.col === hit.col,
+        );
+        this.canvas.style.cursor = isTarget ? 'pointer' : 'default';
+      } else {
+        this.canvas.style.cursor = 'default';
+      }
+    }
+
+    private onKeyDown(e: KeyboardEvent) {
+      const arrows = ['ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight'];
+      if (!arrows.includes(e.key)) return;
+      if (e.repeat) return;
+      e.preventDefault();
+      this.pressedKeys.add(e.key);
+      if (this.moveTimer === null) {
+        this.moveTimer = window.setTimeout(() => {
+          this.executeKeyboardMove();
+          this.moveTimer = null;
+        }, 40);
+      }
+    }
+
+    private onKeyUp(e: KeyboardEvent) {
+      this.pressedKeys.delete(e.key);
+    }
+
+    private executeKeyboardMove() {
+      if (this.state.solved) return;
+      let dr = 0;
+      let dc = 0;
+      if (this.pressedKeys.has('ArrowUp')) dr -= 1;
+      if (this.pressedKeys.has('ArrowDown')) dr += 1;
+      if (this.pressedKeys.has('ArrowLeft')) dc -= 1;
+      if (this.pressedKeys.has('ArrowRight')) dc += 1;
+      if (dr === 0 && dc === 0) return;
+
+      const move = this.validMoves.find(
+        (m) => m.dir.dr === dr && m.dir.dc === dc,
+      );
+      if (!move) return;
+
+      this.doMove(move.dir);
+      this.pressedKeys.clear();
+    }
+
+    /** Shared move execution for clicks and keyboard */
+    private doMove(dir: { dr: number; dc: number; label: string }) {
+      this.state = makeMove(this.state, dir);
+      this.validMoves = getValidMoves(this.state);
+      this.updateMoveCounter();
+
+      if (this.state.solved && !this.winShown) {
+        this.winShown = true;
+        const { cellSize } = this.tokens;
+        const cx = this.state.cols * cellSize / 2 + this.padding;
+        const cy = this.state.rows * cellSize / 2 + this.padding;
+        this.confetti = spawnConfetti(
+          cx, cy,
+          this.tokens.confettiCount,
+          this.tokens.confettiSpread,
+          ['#c47a2a', '#e8b85a', '#f0d88a', '#3a3020', '#5a4a30'],
+        );
+        this.startAnimating();
+      }
+
+      this.render();
+    }
+
+    undo() {
+      if (!canUndo(this.state)) return;
+      this.state = undoMove(this.state);
+      this.validMoves = getValidMoves(this.state);
+      this.winShown = false;
+      this.confetti = [];
+      this.updateMoveCounter();
+      this.render();
+    }
+
+    reset() {
+      this.state = resetPuzzle();
+      this.validMoves = getValidMoves(this.state);
+      this.winShown = false;
+      this.confetti = [];
+      this.updateMoveCounter();
+      this.render();
+    }
+
+    private startAnimating() {
+      if (this.animating) return;
+      this.animating = true;
+      this.lastTime = performance.now();
+      const loop = (now: number) => {
+        const dt = Math.min((now - this.lastTime) / 1000, 0.05);
+        this.lastTime = now;
+        const alive = stepConfetti(this.confetti, dt, this.tokens.confettiGravity);
+        this.render();
+        if (alive > 0) {
+          requestAnimationFrame(loop);
+        } else {
+          this.animating = false;
+        }
+      };
+      requestAnimationFrame(loop);
+    }
+
+    private updateMoveCounter() {
+      this.moveCounter.textContent = `moves: ${this.state.moves}`;
+    }
+  }
+
+  // ─── Boot ─────────────────────────────────────────────────
+
+  const canvas = document.getElementById('bfk-canvas') as HTMLCanvasElement;
+  const moveCounter = document.getElementById('bfk-moves')!;
+  const renderer = new KlondikeRenderer(canvas, moveCounter);
+
+  // Undo
+  document.getElementById('bfk-undo')?.addEventListener('click', () => {
+    renderer.undo();
+  });
+
+  // Reset
+  document.getElementById('bfk-reset')?.addEventListener('click', () => {
+    renderer.reset();
+  });
+
+  // Overlay
+  const dialog = document.getElementById('bfk-overlay') as HTMLDialogElement;
+
+  function openOverlay() {
+    if (!dialog) return;
+    dialog.showModal();
+    document.body.style.overflow = 'hidden';
+  }
+
+  function closeOverlay() {
+    if (!dialog) return;
+    dialog.close();
+    document.body.style.overflow = '';
+  }
+
+  document.getElementById('bfk-help')?.addEventListener('click', openOverlay);
+  document.getElementById('bfk-overlay-close')?.addEventListener('click', closeOverlay);
+
+  dialog?.addEventListener('click', (e) => {
+    if (e.target === dialog) closeOverlay();
+  });
+
+  dialog?.addEventListener('cancel', () => {
+    document.body.style.overflow = '';
+  });
+</script>

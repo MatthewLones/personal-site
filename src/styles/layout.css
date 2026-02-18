@@ -2,6 +2,7 @@
   display: grid;
   grid-template-columns: var(--margin-left) minmax(0, var(--content-max-width)) 1fr;
   min-height: 100vh;
+  padding-bottom: var(--margin-left);
   position: relative;
   z-index: 1;
 }
@@ -28,6 +29,7 @@
 .margin-right {
   grid-column: 3;
   position: relative;
+  z-index: 1;
 }
 
 /* Glassmorphic bento box utility */

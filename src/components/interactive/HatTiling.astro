@@ -61,8 +61,9 @@
     // Scroll state
     private scrollY = 0;
 
-    // Content card left edge (tiles render to the left of this)
+    // Content card edges (tiles render outside these bounds)
     private cardLeft = Infinity;
+    private cardAbsBottom = Infinity; // absolute (document) Y of card bottom
 
     // Hover trail: tiles that were recently hovered, fading out
     private coolingTiles: Map<number, number> = new Map(); // tileIndex → timestamp
@@ -78,6 +79,12 @@
     // Easter egg: click counter
     private clickCount = 0;
     private clickCounterEl: HTMLElement | null = null;
+
+    // Ripple: expanding wavefront from each click
+    private ripples: { cx: number; cy: number; time: number }[] = [];
+    private rippleSpeed = 800;
+    private rippleFade = 0.3;
+    private rippleRadius = 600;
 
     // Audio: subtle pen-click via Web Audio API
     private audioCtx: AudioContext | null = null;
@@ -106,6 +113,12 @@
       if (!isNaN(clickScale)) this.clickScale = clickScale;
       const clickDuration = parseFloat(styles.getPropertyValue('--tile-click-duration').trim());
       if (!isNaN(clickDuration)) this.clickDuration = clickDuration;
+      const rippleSpeed = parseFloat(styles.getPropertyValue('--tile-ripple-speed').trim());
+      if (!isNaN(rippleSpeed)) this.rippleSpeed = rippleSpeed;
+      const rippleFade = parseFloat(styles.getPropertyValue('--tile-ripple-fade').trim());
+      if (!isNaN(rippleFade)) this.rippleFade = rippleFade;
+      const rippleRadius = parseFloat(styles.getPropertyValue('--tile-ripple-radius').trim());
+      if (!isNaN(rippleRadius)) this.rippleRadius = rippleRadius;
 
       const bgLightHex = styles.getPropertyValue('--color-bg-light').trim();
       const bgDarkHex = styles.getPropertyValue('--color-bg-dark').trim();
@@ -121,13 +134,13 @@
       this.tiles = generateHatTiling(4);
       this.setupCanvas();
       this.computeTransform();
-      this.updateCardLeft();
+      this.updateCardBounds();
       this.scrollY = window.scrollY;
 
       window.addEventListener('resize', () => {
         this.setupCanvas();
         this.computeTransform();
-        this.updateCardLeft();
+        this.updateCardBounds();
         this.scheduleRender();
       });
       window.addEventListener('scroll', () => {
@@ -140,6 +153,7 @@
       document.addEventListener('pointerleave', () => this.onPointerLeave());
 
       this.scheduleRender();
+      window.dispatchEvent(new CustomEvent('component-ready', { detail: { id: 'hat-tiling' } }));
     }
 
     private setupCanvas() {
@@ -153,9 +167,13 @@
       this.ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
     }
 
-    private updateCardLeft() {
+    private updateCardBounds() {
       const card = document.querySelector('.content-card');
-      if (card) this.cardLeft = card.getBoundingClientRect().left;
+      if (card) {
+        const rect = card.getBoundingClientRect();
+        this.cardLeft = rect.left;
+        this.cardAbsBottom = rect.bottom + window.scrollY;
+      }
     }
 
     private computeTransform() {
@@ -217,16 +235,33 @@
 
     /**
      * Compute tile visibility alpha.
-     * Tiles only visible in the left margin (left of content card),
-     * with a smooth 80px fade near the card edge.
+     * Tiles visible in the left margin (left of content card) and
+     * below the content card (bottom strip), both with a smooth
+     * 80px fade near the card edge.
      */
-    private getTileAlpha(sx: number): number {
-      if (sx >= this.cardLeft) return 0;
+    private getTileAlpha(sx: number, sy: number): number {
       const fadeDistance = 80;
-      const dist = this.cardLeft - sx;
-      return dist < fadeDistance
-        ? this.outlineOpacity * (dist / fadeDistance)
-        : this.outlineOpacity;
+
+      // Horizontal alpha (left margin zone)
+      let hAlpha = 0;
+      if (sx < this.cardLeft) {
+        const dist = this.cardLeft - sx;
+        hAlpha = dist < fadeDistance
+          ? this.outlineOpacity * (dist / fadeDistance)
+          : this.outlineOpacity;
+      }
+
+      // Vertical alpha (bottom strip zone)
+      let vAlpha = 0;
+      const cardBottomScreen = this.cardAbsBottom - this.scrollY;
+      if (sy > cardBottomScreen) {
+        const dist = sy - cardBottomScreen;
+        vAlpha = dist < fadeDistance
+          ? this.outlineOpacity * (dist / fadeDistance)
+          : this.outlineOpacity;
+      }
+
+      return Math.max(hAlpha, vAlpha);
     }
 
     /**
@@ -255,6 +290,41 @@
           this.coolingTiles.delete(idx);
         }
       }
+    }
+
+    /**
+     * Compute ripple darkening factor (0–1) for a tile given its world centroid.
+     */
+    private getRippleFactor(centroid: { x: number; y: number }): number {
+      if (this.ripples.length === 0) return 0;
+      const now = performance.now();
+      let maxFactor = 0;
+      for (let i = 0; i < this.ripples.length; i++) {
+        const r = this.ripples[i];
+        const dx = centroid.x - r.cx;
+        const dy = centroid.y - r.cy;
+        const screenDist = Math.sqrt(dx * dx + dy * dy) * this.scale;
+        if (screenDist > this.rippleRadius) continue;
+        const elapsed = (now - r.time) / 1000;
+        const arrivalTime = screenDist / this.rippleSpeed;
+        const localElapsed = elapsed - arrivalTime;
+        if (localElapsed < 0 || localElapsed >= this.rippleFade) continue;
+        const timeFactor = 1 - localElapsed / this.rippleFade;
+        const distFactor = 1 - screenDist / this.rippleRadius;
+        const factor = timeFactor * distFactor;
+        if (factor > maxFactor) maxFactor = factor;
+      }
+      return maxFactor;
+    }
+
+    /**
+     * Remove ripples whose wavefront + fade have fully expired.
+     */
+    private cleanRipples() {
+      if (this.ripples.length === 0) return;
+      const now = performance.now();
+      const maxLifeMs = (this.rippleRadius / this.rippleSpeed + this.rippleFade) * 1000;
+      this.ripples = this.ripples.filter(r => now - r.time < maxLifeMs);
     }
 
     private static readonly POP_UP_TIME = 0.04; // seconds — very fast snap
@@ -345,7 +415,7 @@
       filter.Q.value = 1.5;
 
       const gain = ctx.createGain();
-      gain.gain.value = 0.06;
+      gain.gain.value = 0.12;
 
       source.connect(filter);
       filter.connect(gain);
@@ -378,8 +448,9 @@
         this.pendingRender = false;
         this.cleanCoolingTiles();
         this.cleanPoppingTiles();
+        this.cleanRipples();
         this.render();
-        if (this.coolingTiles.size > 0 || this.poppingTiles.size > 0) {
+        if (this.coolingTiles.size > 0 || this.poppingTiles.size > 0 || this.ripples.length > 0) {
           this.scheduleRender();
         }
       });
@@ -390,7 +461,7 @@
      * Only checks tiles in the visible left-margin zone.
      */
     private findTileAtScreen(sx: number, sy: number): number {
-      if (this.getTileAlpha(sx) < 0.01) return -1;
+      if (this.getTileAlpha(sx, sy) < 0.01) return -1;
 
       const worldPt = this.screenToWorld(sx, sy);
       for (let i = 0; i < this.tiles.length; i++) {
@@ -514,8 +585,17 @@
 
       // Start (or restart) the pop animation — held until pointerup
       this.coolingTiles.delete(idx);
-      this.poppingTiles.set(idx, { pressTime: performance.now(), releaseTime: -1 });
+      const now = performance.now();
+      this.poppingTiles.set(idx, { pressTime: now, releaseTime: -1 });
       this.heldTile = idx;
+
+      // Spawn ripple from the clicked tile's centroid
+      const tile = this.tiles[idx];
+      this.ripples.push({ cx: tile.centroid.x, cy: tile.centroid.y, time: now });
+
+      // Notify Galton board
+      document.dispatchEvent(new CustomEvent('tile-click'));
+
       this.scheduleRender();
     }
 
@@ -549,7 +629,7 @@
         for (const [i] of this.poppingTiles) {
           const tile = this.tiles[i];
           const screenCentroid = this.worldToScreen(tile.centroid);
-          const alpha = this.getTileAlpha(screenCentroid.x);
+          const alpha = this.getTileAlpha(screenCentroid.x, screenCentroid.y);
           const popFactor = this.getPopFactor(i);
           if (alpha < 0.01 || popFactor < 0.001) continue;
           const currentScale = 1 + (this.clickScale - 1) * popFactor;
@@ -577,15 +657,17 @@
       }
 
       // ─── Pass 1: Regular tiles (clipped around pop regions) ───
+      const cardBottomScreen = this.cardAbsBottom - this.scrollY;
       for (let i = 0; i < this.tiles.length; i++) {
         const tile = this.tiles[i];
 
         // Early cull: check centroid before transforming all vertices
         const screenCentroid = this.worldToScreen(tile.centroid);
-        if (screenCentroid.x > this.cardLeft + 50) continue;
+        // Skip tiles outside both visible zones (left margin + bottom strip)
+        if (screenCentroid.x > this.cardLeft + 50 && screenCentroid.y < cardBottomScreen - 50) continue;
         if (screenCentroid.y < -100 || screenCentroid.y > canvasH + 100) continue;
 
-        const alpha = this.getTileAlpha(screenCentroid.x);
+        const alpha = this.getTileAlpha(screenCentroid.x, screenCentroid.y);
         if (alpha < 0.01) continue;
 
         // Skip popping tiles in Pass 1 — Pass 2 handles them
@@ -595,6 +677,7 @@
 
         const isHovered = i === this.hoveredTile;
         const coolingFactor = this.getCoolingFactor(i);
+        const rippleFactor = this.getRippleFactor(tile.centroid);
 
         ctx.beginPath();
         ctx.moveTo(screenVerts[0].x, screenVerts[0].y);
@@ -603,13 +686,14 @@
         }
         ctx.closePath();
 
-        // Hover highlight (active or fading trail)
-        if (isHovered || coolingFactor > 0) {
+        // Hover highlight + ripple shimmer (combined)
+        const hoverFactor = isHovered ? 1 : coolingFactor;
+        const combinedFactor = Math.min(1, hoverFactor + rippleFactor);
+        if (combinedFactor > 0) {
           const bgColor = this.getGradientColorAt(screenCentroid.x, screenCentroid.y);
           const darkened = darkenColor(bgColor, this.hoverDarken);
           const hoverAlpha = alpha / this.outlineOpacity;
-          const factor = isHovered ? 1 : coolingFactor;
-          ctx.fillStyle = `rgba(${darkened[0]}, ${darkened[1]}, ${darkened[2]}, ${hoverAlpha * 0.5 * factor})`;
+          ctx.fillStyle = `rgba(${darkened[0]}, ${darkened[1]}, ${darkened[2]}, ${hoverAlpha * 0.5 * combinedFactor})`;
           ctx.fill();
         }
 

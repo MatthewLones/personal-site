@@ -33,6 +33,9 @@
   --tile-click-darken: 0.15;
   --tile-click-scale: 1.15;
   --tile-click-duration: 0.15;
+  --tile-ripple-speed: 1200;
+  --tile-ripple-fade: 0.25;
+  --tile-ripple-radius: 600;
 
   /* ═══════════════════════════════════════════
      Vector Field (right margin interactive)
@@ -56,6 +59,16 @@
   --vf-ball-gravity: 500;
   --vf-ball-trail: 8;
 
+  /* Dashboard */
+  --vf-dashboard-opacity: 0.3;
+  --vf-dashboard-hover-opacity: 0.7;
+
+  /* Wind Transition */
+  --vf-wind-speed: 650;
+  --vf-leaf-spawn-rate: 6;
+  --vf-leaf-decay-rate: 0.15;
+  --vf-leaf-max-count: 280;
+
   /* ═══════════════════════════════════════════
      Glassmorphic Bento Boxes
      ═══════════════════════════════════════════ */
@@ -65,9 +78,22 @@
   --glass-border-radius: 16px;
 
   /* ═══════════════════════════════════════════
-     Profile Picture
+     Profile Photo Reveal (elastic drag interaction)
+     Formal photo on top, silly photo underneath.
+     Drag the formal photo to peek; release snaps
+     it back via underdamped spring with gentle jiggle.
+     A visible rope connects the photo to its home.
      ═══════════════════════════════════════════ */
   --profile-border-radius: 12px;
+  --pp-spring-k: 300;
+  --pp-damping-ratio: 0.7;
+  --pp-max-tilt: 6;
+  --pp-rope-color: var(--vf-arrow-color);
+  --pp-rope-tension-color: #8a2a20;
+  --pp-rope-tension-dist: 1200;
+  --pp-rope-width: 2.5;
+  --pp-shadow: 0 2px 12px rgba(0, 0, 0, 0.15);
+  --pp-shadow-dragging: 0 10px 30px rgba(0, 0, 0, 0.3);
 
   /* ═══════════════════════════════════════════
      Grain / Noise Overlay
@@ -93,4 +119,194 @@
      ═══════════════════════════════════════════ */
   --margin-left: clamp(2rem, 10vw, 14rem);
   --content-max-width: 720px;
+
+  /* ═══════════════════════════════════════════
+     Galton Board (inverted particle accumulator)
+     Particles rise from bottom, bounce through pegs,
+     settle into bins at the top forming a bell curve.
+     ═══════════════════════════════════════════ */
+  --galton-num-rows: 10;
+  --galton-peg-spacing-x: 16;
+  --galton-peg-spacing-y: 20;
+  --galton-peg-radius: 1.5;
+  --galton-peg-color: #2a3020;
+  --galton-peg-opacity: 0.12;
+  --galton-particle-radius: 2.5;
+  --galton-particle-color: #3a3020;
+  --galton-particle-opacity: 0.6;
+  --galton-arc-duration: 0.12;
+  --galton-arc-height: 8;
+  --galton-board-top-margin: 3;
+  --galton-gravity: 800;
+  --galton-damping: 2.0;
+  --galton-restitution: 0.3;
+  --galton-rest-threshold: 5;
+  --galton-rest-frames: 10;
+  --galton-substeps: 3;
+  --galton-collision-iters: 2;
+  --galton-sweep-threshold: 100;
+  --galton-rope-lift-speed: 300;
+  --galton-rope-deploy-time: 0.4;
+
+  /* ═══════════════════════════════════════════
+     Photo Scatter (draggable about-me photos)
+     Scattered organically below the vector field
+     in the right margin. Drag to rearrange,
+     click to bring to front.
+     ═══════════════════════════════════════════ */
+  --ps-box-margin-top: 1.5rem;
+  --ps-photo-radius: 8px;
+  --ps-photo-shadow: 0 2px 8px rgba(0, 0, 0, 0.25);
+  --ps-photo-shadow-lifted: 0 8px 24px rgba(0, 0, 0, 0.35);
+  --ps-photo-min-size: 180px;
+  --ps-photo-max-size: 280px;
+
+  /* ═══════════════════════════════════════════
+     Double Pendulum (interactive Easter egg)
+     Subtle chaotic pendulum near the top of the page.
+     User can grab bobs to reposition and throw.
+     ═══════════════════════════════════════════ */
+  --dp-arm-color: #3a3020;
+  --dp-arm-width: 1.5;
+  --dp-bob-radius: 4;
+  --dp-bob-color: #3a3020;
+  --dp-bob-opacity: 0.7;
+  --dp-pivot-radius: 2;
+  --dp-length1: 34;
+  --dp-length2: 35;
+  --dp-mass1: 1;
+  --dp-mass2: 1;
+  --dp-gravity: 400;
+  --dp-damping: 0.3;
+  --dp-trail-length: 90;
+  --dp-trail-opacity: 0.12;
+
+  /* ═══════════════════════════════════════════
+     Lights Out Puzzle
+     Interactive Lights Out game in the content card.
+     Organic ~5×5 grid — click toggles cell + neighbors.
+     Goal: turn all lights off.
+     ═══════════════════════════════════════════ */
+
+  /* Grid & Cells */
+  --lo-cell-size: 44;
+  --lo-cell-gap: 5;
+  --lo-cell-radius: 12px;
+  --lo-color-on: #c47a2a;
+  --lo-color-off: #2e2a22;
+  --lo-color-on-glow: rgba(196, 122, 42, 0.35);
+  --lo-border-color: #3a3020;
+  --lo-toggle-duration: 0.12;
+
+  /* Controls */
+  --lo-controls-opacity: 0.3;
+  --lo-controls-hover-opacity: 0.7;
+
+  /* Confetti */
+  --lo-confetti-count: 60;
+  --lo-confetti-gravity: 400;
+  --lo-confetti-spread: 300;
+
+  /* Overlay */
+  --lo-overlay-bg: #adb99f;
+  --lo-overlay-max-width: 760px;
+
+  /* 3D Graph (overlay) */
+  --lo-3d-node-radius: 6;
+  --lo-3d-edge-color: #5a5040;
+  --lo-3d-node-on: #c47a2a;
+  --lo-3d-node-off: #3a3020;
+  --lo-3d-rotate-speed: 0.008;
+
+  /* Mod-K (overlay) */
+  --lo-modk-colors: #2e2a22, #7a5a30, #c47a2a, #e8b85a, #f0d88a;
+
+  /* ═══════════════════════════════════════════
+     Peg Solitaire (English board)
+     Classic cross-shaped board — jump pegs to
+     remove them. Goal: one peg remaining.
+     Group theory + Conway's pagoda function.
+     ═══════════════════════════════════════════ */
+
+  /* Board & Cells */
+  --peg-cell-size: 30;
+  --peg-hole-color: #3a3020;
+  --peg-hole-opacity: 0.15;
+
+  /* Pegs */
+  --peg-color: #3a3020;
+  --peg-radius: 10;
+  --peg-selected-color: #c47a2a;
+  --peg-selected-glow: rgba(196, 122, 42, 0.3);
+
+  /* Valid Moves */
+  --peg-target-color: #c47a2a;
+  --peg-target-opacity: 0.3;
+
+  /* Controls */
+  --peg-controls-opacity: 0.3;
+  --peg-controls-hover-opacity: 0.7;
+  --peg-border-color: #3a3020;
+
+  /* Overlay */
+  --peg-overlay-bg: #adb99f;
+  --peg-overlay-max-width: 760px;
+
+  /* ═══════════════════════════════════════════
+     Back From The Klondike (jump maze)
+     Sam Loyd's 1898 puzzle to defeat Euler.
+     Diamond grid of numbered cells — jump N steps
+     in 8 directions to escape the border.
+     ═══════════════════════════════════════════ */
+
+  /* Grid & Cells */
+  --bfk-cell-size: 22;
+  --bfk-cell-radius: 4px;
+  --bfk-cell-color: #2e2a22;
+  --bfk-number-color: #f0e8d8;
+  --bfk-border-cell-color: #6a6058;
+  --bfk-border-cell-opacity: 0.45;
+
+  /* Player & Path */
+  --bfk-current-color: #c47a2a;
+  --bfk-visited-color: #484840;
+  --bfk-path-color: #c47a2a;
+  --bfk-path-opacity: 0.4;
+  --bfk-path-width: 1.5;
+
+  /* Valid Moves */
+  --bfk-target-color: #c47a2a;
+  --bfk-target-opacity: 0.3;
+
+  /* Heart (start) */
+  --bfk-heart-color: #c47a2a;
+
+  /* Controls */
+  --bfk-controls-opacity: 0.3;
+  --bfk-controls-hover-opacity: 0.7;
+  --bfk-border-color: #3a3020;
+
+  /* Overlay */
+  --bfk-overlay-bg: #adb99f;
+  --bfk-overlay-max-width: 760px;
+
+  /* ═══════════════════════════════════════════
+     Loading Screen
+     Full-screen leaf-based loading overlay.
+     Leaves orbit in a tight circle at center,
+     then spiral outward erasing the gradient
+     to reveal the site beneath.
+     ═══════════════════════════════════════════ */
+  --ls-z-index: 9998;
+  --ls-leaf-count: 14;
+  --ls-leaf-color: var(--vf-arrow-color);
+  --ls-leaf-opacity: 0.6;
+  --ls-orbit-radius: 30;
+  --ls-orbit-speed: 3.0;
+  --ls-fanout-accel: 400;
+  --ls-eraser-base: 20;
+  --ls-eraser-growth: 40;
+  --ls-eraser-softness: 0.5;
+  --ls-ready-timeout: 5000;
+  --ls-min-spin-time: 800;
 }

@@ -1,0 +1,303 @@
+---
+---
+<div class="pp-container" id="pp-container">
+  <div class="pp-under">
+    <img src="/photos/profile-silly.jpg" alt="" draggable="false" />
+  </div>
+  <img
+    class="pp-top"
+    id="pp-top"
+    src="/photos/profile-formal.jpg"
+    alt="Profile photo"
+    draggable="false"
+  />
+</div>
+
+<style>
+  .pp-container {
+    position: relative;
+    width: 100%;
+    max-width: 320px;
+    aspect-ratio: 4 / 5;
+    margin-bottom: 1rem;
+    user-select: none;
+    -webkit-user-select: none;
+    touch-action: none;
+  }
+
+  .pp-under {
+    position: absolute;
+    inset: 0;
+    border-radius: var(--profile-border-radius);
+    overflow: hidden;
+  }
+
+  .pp-under img {
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+    display: block;
+  }
+
+  .pp-top {
+    position: absolute;
+    inset: 0;
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+    border-radius: var(--profile-border-radius);
+    cursor: grab;
+    will-change: transform;
+    box-shadow: var(--pp-shadow);
+    transition: box-shadow 0.15s ease;
+    z-index: 2;
+  }
+
+  .pp-top.is-dragging {
+    cursor: grabbing;
+    box-shadow: var(--pp-shadow-dragging);
+  }
+</style>
+
+<script>
+  const container = document.getElementById('pp-container');
+  const formal = document.getElementById('pp-top') as HTMLImageElement | null;
+
+  if (container && formal) {
+    /* ── Read design tokens ──────────────────────── */
+    const cs = getComputedStyle(document.documentElement);
+    const num = (name: string, fb: number) => {
+      const v = parseFloat(cs.getPropertyValue(name).trim());
+      return isNaN(v) ? fb : v;
+    };
+    const str = (name: string, fb: string) => {
+      const v = cs.getPropertyValue(name).trim();
+      return v || fb;
+    };
+
+    const K = num('--pp-spring-k', 300);
+    const zeta = num('--pp-damping-ratio', 0.7);
+    const maxTilt = num('--pp-max-tilt', 6);
+    const ropeColor = str('--pp-rope-color', '#3a3020');
+    const tensionColor = str('--pp-rope-tension-color', '#8a2a20');
+    const tensionDist = num('--pp-rope-tension-dist', 1200);
+    const ropeWidth = num('--pp-rope-width', 2.5);
+    const C = 2 * zeta * Math.sqrt(K); // damping coefficient (m = 1)
+
+    // Parse hex → RGB for color interpolation
+    function hexRGB(hex: string): [number, number, number] {
+      const h = hex.replace('#', '');
+      return [parseInt(h.slice(0, 2), 16), parseInt(h.slice(2, 4), 16), parseInt(h.slice(4, 6), 16)];
+    }
+    const baseRGB = hexRGB(ropeColor);
+    const strainRGB = hexRGB(tensionColor);
+
+    /* ── Body-level drag layer ───────────────────── */
+    // z-index 2: above page-grid (z:1) → above galton/pendulum,
+    //            below grain overlay (z:9999)
+    const dragLayer = document.createElement('div');
+    dragLayer.style.cssText = 'position:fixed;inset:0;z-index:2;pointer-events:none;display:none';
+    document.body.appendChild(dragLayer);
+
+    // Rope SVG lives in the drag layer (viewport coordinates)
+    const ropeSvg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+    ropeSvg.style.cssText = 'position:absolute;inset:0;width:100%;height:100%;overflow:visible;pointer-events:none';
+    dragLayer.appendChild(ropeSvg);
+
+    const ropePath = document.createElementNS('http://www.w3.org/2000/svg', 'path');
+    ropePath.setAttribute('fill', 'none');
+    ropePath.setAttribute('stroke-linecap', 'round');
+    ropeSvg.appendChild(ropePath);
+
+    /* ── State ───────────────────────────────────── */
+    let dragging = false;
+    let animating = false;
+    let ox = 0, oy = 0;           // offset from home (px)
+    let vx = 0, vy = 0;           // velocity (px/s)
+    let anchorX = 0, anchorY = 0; // pointer anchor
+    let prevX = 0, prevY = 0;
+    let prevT = 0;
+    let homeX = 0, homeY = 0;     // home center in viewport coords
+    let homeW = 0, homeH = 0;     // home dimensions
+
+    function getHome(): void {
+      const r = container!.getBoundingClientRect();
+      homeX = r.left + r.width / 2;
+      homeY = r.top + r.height / 2;
+      homeW = r.width;
+      homeH = r.height;
+    }
+
+    /* ── Helpers ─────────────────────────────────── */
+    function updateRope(): void {
+      const dist = Math.hypot(ox, oy);
+      if (dist < 3) {
+        ropePath.setAttribute('d', '');
+        return;
+      }
+
+      const sx = homeX, sy = homeY;
+      const ex = homeX + ox, ey = homeY + oy;
+
+      // Sag: more when slack, less when taut
+      const sag = Math.min(20, 600 / (dist + 30));
+      const mx = (sx + ex) / 2;
+      const my = (sy + ey) / 2 + sag;
+
+      // Thinner when stretched
+      const sw = Math.max(1, ropeWidth * Math.min(1, 80 / (dist + 30)));
+      ropePath.setAttribute('stroke-width', String(sw));
+
+      // Tension color: quartic ease-in for very gradual ramp
+      const t = Math.min(1, dist / tensionDist);
+      const t4 = t * t * t * t;
+      const r = Math.round(baseRGB[0] + (strainRGB[0] - baseRGB[0]) * t4);
+      const g = Math.round(baseRGB[1] + (strainRGB[1] - baseRGB[1]) * t4);
+      const b = Math.round(baseRGB[2] + (strainRGB[2] - baseRGB[2]) * t4);
+      ropePath.setAttribute('stroke', `rgb(${r},${g},${b})`);
+
+      ropePath.setAttribute('d',
+        `M${sx.toFixed(1)},${sy.toFixed(1)} Q${mx.toFixed(1)},${my.toFixed(1)} ${ex.toFixed(1)},${ey.toFixed(1)}`);
+    }
+
+    function showDragLayer(): void {
+      getHome();
+      dragLayer.style.display = '';
+      ropeSvg.setAttribute('viewBox', `0 0 ${window.innerWidth} ${window.innerHeight}`);
+
+      // Move formal photo into the drag layer with fixed positioning
+      formal!.style.position = 'fixed';
+      formal!.style.inset = 'auto';
+      formal!.style.width = homeW + 'px';
+      formal!.style.height = homeH + 'px';
+      formal!.style.left = (homeX - homeW / 2) + 'px';
+      formal!.style.top = (homeY - homeH / 2) + 'px';
+      formal!.style.pointerEvents = 'auto';
+      dragLayer.appendChild(formal!);
+    }
+
+    function hideDragLayer(): void {
+      // Move formal photo back to its container
+      formal!.style.position = '';
+      formal!.style.inset = '';
+      formal!.style.width = '';
+      formal!.style.height = '';
+      formal!.style.left = '';
+      formal!.style.top = '';
+      formal!.style.pointerEvents = '';
+      formal!.style.transform = '';
+      container!.appendChild(formal!);
+      dragLayer.style.display = 'none';
+      ropePath.setAttribute('d', '');
+    }
+
+    function applyTransform(): void {
+      const d = Math.hypot(ox, oy);
+      const tilt = Math.min(d * 0.04, maxTilt) * Math.sign(ox);
+      formal!.style.transform = `translate(${ox}px, ${oy}px) rotate(${tilt}deg)`;
+      updateRope();
+    }
+
+    /* ── Drag start ─────────────────────────────── */
+    // Use a persistent listener — works whether formal is in container or drag layer
+    formal.addEventListener('pointerdown', (e) => {
+      if (e.button !== 0) return;
+      e.preventDefault();
+      dragging = true;
+      animating = false;
+      formal!.classList.add('is-dragging');
+
+      showDragLayer();
+
+      anchorX = e.clientX - ox;
+      anchorY = e.clientY - oy;
+      prevX = e.clientX;
+      prevY = e.clientY;
+      prevT = performance.now();
+      vx = 0;
+      vy = 0;
+
+      applyTransform();
+    });
+
+    /* ── Drag move (document-level) ──────────────── */
+    document.addEventListener('pointermove', (e) => {
+      if (!dragging) return;
+
+      ox = e.clientX - anchorX;
+      oy = e.clientY - anchorY;
+
+      const now = performance.now();
+      const dt = (now - prevT) / 1000;
+      if (dt > 0.001) {
+        const a = 0.35; // EMA smoothing
+        vx = vx * (1 - a) + ((e.clientX - prevX) / dt) * a;
+        vy = vy * (1 - a) + ((e.clientY - prevY) / dt) * a;
+      }
+
+      prevX = e.clientX;
+      prevY = e.clientY;
+      prevT = now;
+      applyTransform();
+    });
+
+    /* ── Release ────────────────────────────────── */
+    function release(): void {
+      if (!dragging) return;
+      dragging = false;
+      formal!.classList.remove('is-dragging');
+
+      const maxV = 2000;
+      const spd = Math.hypot(vx, vy);
+      if (spd > maxV) {
+        const sc = maxV / spd;
+        vx *= sc;
+        vy *= sc;
+      }
+
+      if (Math.hypot(ox, oy) > 0.5 || spd > 5) {
+        animating = true;
+        prevT = performance.now();
+        requestAnimationFrame(step);
+      } else {
+        settle();
+      }
+    }
+
+    document.addEventListener('pointerup', () => { if (dragging) release(); });
+    document.addEventListener('pointercancel', () => { if (dragging) release(); });
+
+    /* ── Spring animation (with bounce) ─────────── */
+    function step(now: number): void {
+      if (!animating) return;
+
+      const rawDt = Math.min((now - prevT) / 1000, 0.04);
+      prevT = now;
+
+      // Sub-step for stability
+      const n = 4;
+      const dt = rawDt / n;
+      for (let i = 0; i < n; i++) {
+        vx += (-K * ox - C * vx) * dt;
+        vy += (-K * oy - C * vy) * dt;
+        ox += vx * dt;
+        oy += vy * dt;
+      }
+
+      applyTransform();
+
+      if (Math.hypot(ox, oy) < 0.3 && Math.hypot(vx, vy) < 5) {
+        settle();
+        return;
+      }
+
+      requestAnimationFrame(step);
+    }
+
+    function settle(): void {
+      animating = false;
+      ox = oy = vx = vy = 0;
+      hideDragLayer();
+    }
+  }
+</script>

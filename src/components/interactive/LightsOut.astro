@@ -1,0 +1,1291 @@
+---
+/**
+ * Lights Out Puzzle
+ * Interactive game: click cells to toggle them + neighbours.
+ * Goal: turn all lights off.
+ */
+---
+
+<div class="lo-container">
+  <canvas id="lo-canvas" class="lo-canvas"></canvas>
+
+  <div class="lo-controls">
+    <div class="lo-mode-bar">
+      <button class="lo-btn" id="lo-new-puzzle">new puzzle</button>
+      <button class="lo-btn" id="lo-hint">hint</button>
+      <button class="lo-btn" id="lo-help">?</button>
+    </div>
+    <span class="lo-move-counter" id="lo-moves">moves: 0</span>
+  </div>
+
+  <!-- Overlay dialog -->
+  <dialog id="lo-overlay" class="lo-overlay">
+    <div class="lo-overlay-inner">
+      <button class="lo-overlay-close" id="lo-overlay-close" aria-label="Close">&times;</button>
+
+      <h2 class="lo-overlay-title">Lights Out</h2>
+
+      <p>
+        <em>Lights Out</em> was released by Tiger Electronics in 1995 as a handheld
+        electronic game. The premise is simple: you have a grid of lights, some on
+        and some off. Pressing any light toggles it and its four direct neighbours.
+        Your goal is to turn every light off.
+      </p>
+      <p>
+        What makes the game mathematically fascinating is that it can be completely
+        analysed using linear algebra over the field GF(2) — the field with just
+        two elements, 0 and 1. Every puzzle is either solvable or not, and the
+        answer depends on the null space of the toggle matrix.
+      </p>
+
+      <h3>The Math</h3>
+      <p>
+        Number each cell 1 through <em>n</em>. Define the <strong>toggle matrix</strong>
+        <em>A</em> over GF(2):
+      </p>
+      <div class="lo-math-block">
+        A<sub>ij</sub> = 1 if pressing cell <em>j</em> toggles cell <em>i</em>, else 0
+      </div>
+      <p>
+        A board state is a vector <strong>b</strong> &isin; GF(2)<sup>n</sup> where
+        b<sub>i</sub> = 1 means light <em>i</em> is on. We want to find a move
+        vector <strong>x</strong> such that:
+      </p>
+      <div class="lo-math-block">
+        A<strong>x</strong> = <strong>b</strong> &ensp;(mod 2)
+      </div>
+      <p>
+        This is a system of linear equations over GF(2). The puzzle is solvable
+        if and only if <strong>b</strong> lies in the column space of <em>A</em> — equivalently,
+        <strong>b</strong> is orthogonal to every vector in the null space of
+        <em>A</em><sup>T</sup>.
+      </p>
+      <p>
+        For the standard 5&times;5 board, the null space of <em>A</em> has dimension 2,
+        meaning there are exactly 4 equivalence classes of solutions. Not every
+        configuration is solvable — roughly 25% of random states are unreachable.
+      </p>
+
+      <h3>Graph Generalisation</h3>
+      <p>
+        The game generalises naturally to <em>any graph</em>.
+        Replace the grid with an arbitrary network of nodes, and pressing a node
+        toggles it and all its graph-neighbours. The same linear algebra applies.
+        Try it below — drag to rotate, click a node to toggle.
+      </p>
+      <div class="lo-section-interactive">
+        <canvas id="lo-3d-canvas" class="lo-3d-canvas"></canvas>
+        <div class="lo-section-controls">
+          <div class="lo-mode-bar">
+            <button class="lo-btn" id="lo-3d-new">new graph</button>
+            <button class="lo-btn" id="lo-3d-hint">hint</button>
+          </div>
+          <span class="lo-move-counter" id="lo-3d-moves">moves: 0</span>
+        </div>
+      </div>
+
+      <h3>Mod-K Generalisation</h3>
+      <p>
+        Replace GF(2) with &Zopf;/K&Zopf;. Each cell cycles through K states
+        (0, 1, &hellip;, K&minus;1), and pressing a cell increments it and its
+        neighbours by 1 modulo K. The solvability condition becomes:
+      </p>
+      <div class="lo-math-block">
+        A<strong>x</strong> &equiv; <strong>b</strong> &ensp;(mod K)
+      </div>
+      <p>
+        Gaussian elimination works over &Zopf;/K&Zopf; when K is prime. For
+        composite K, Smith normal form gives the complete picture. Try it:
+      </p>
+      <div class="lo-section-interactive">
+        <canvas id="lo-modk-canvas" class="lo-modk-canvas"></canvas>
+        <div class="lo-section-controls">
+          <div class="lo-mode-bar">
+            <button class="lo-btn lo-modk-k active" data-k="3">K=3</button>
+            <button class="lo-btn lo-modk-k" data-k="4">K=4</button>
+            <button class="lo-btn lo-modk-k" data-k="5">K=5</button>
+          </div>
+          <div class="lo-mode-bar">
+            <button class="lo-btn" id="lo-modk-new">new puzzle</button>
+            <button class="lo-btn" id="lo-modk-hint">hint</button>
+          </div>
+          <span class="lo-move-counter" id="lo-modk-moves">moves: 0</span>
+        </div>
+      </div>
+    </div>
+  </dialog>
+</div>
+
+<script>
+  import {
+    generateOrganicShape,
+    createGameState,
+    layoutCells,
+    gridDimensions,
+    toggleCell,
+    generatePuzzle,
+    hitTestCell,
+    spawnConfetti,
+    stepConfetti,
+    generateSpiderWebGraph,
+    projectNodes,
+    toggleGraphNode,
+    hitTestGraphNode,
+    generateGraph3DPuzzle,
+    solveLightsOutGrid,
+    solveGraph3D,
+    type LightsOutState,
+    type ConfettiParticle,
+    type Graph3DState,
+  } from '../../lib/lights-out';
+
+  // ═══════════════════════════════════════════════════════════
+  //  TOKEN READER
+  // ═══════════════════════════════════════════════════════════
+
+  function readTokens() {
+    const s = getComputedStyle(document.documentElement);
+    const str = (name: string, fallback: string = '') =>
+      s.getPropertyValue(name).trim() || fallback;
+    const num = (name: string, fallback: number) => {
+      const v = parseFloat(s.getPropertyValue(name));
+      return isNaN(v) ? fallback : v;
+    };
+    return {
+      cellSize: num('--lo-cell-size', 44),
+      cellGap: num('--lo-cell-gap', 5),
+      cellRadius: parseFloat(str('--lo-cell-radius', '12')),
+      colorOn: str('--lo-color-on', '#c47a2a'),
+      colorOff: str('--lo-color-off', '#2e2a22'),
+      colorOnGlow: str('--lo-color-on-glow', 'rgba(196,122,42,0.35)'),
+      borderColor: str('--lo-border-color', '#3a3020'),
+      toggleDuration: num('--lo-toggle-duration', 0.12),
+      controlsOpacity: num('--lo-controls-opacity', 0.3),
+      controlsHoverOpacity: num('--lo-controls-hover-opacity', 0.7),
+      confettiCount: num('--lo-confetti-count', 60),
+      confettiGravity: num('--lo-confetti-gravity', 400),
+      confettiSpread: num('--lo-confetti-spread', 300),
+      // 3D
+      nodeRadius: num('--lo-3d-node-radius', 6),
+      edgeColor: str('--lo-3d-edge-color', '#5a5040'),
+      nodeOn: str('--lo-3d-node-on', '#c47a2a'),
+      nodeOff: str('--lo-3d-node-off', '#3a3020'),
+      rotateSpeed: num('--lo-3d-rotate-speed', 0.003),
+      // Mod-K
+      modkColors: str('--lo-modk-colors', '#2e2a22,#7a5a30,#c47a2a,#e8b85a,#f0d88a')
+        .split(',')
+        .map((c: string) => c.trim()),
+    };
+  }
+
+  const CONFETTI_COLORS = ['#c47a2a', '#e8b85a', '#f0d88a', '#3a3020', '#7a5a30', '#BCC6AF'];
+
+  // ═══════════════════════════════════════════════════════════
+  //  MAIN GAME RENDERER
+  // ═══════════════════════════════════════════════════════════
+
+  class LightsOutRenderer {
+    private canvas: HTMLCanvasElement;
+    private ctx: CanvasRenderingContext2D;
+    private tokens: ReturnType<typeof readTokens>;
+    private state!: LightsOutState;
+    private confetti: ConfettiParticle[] = [];
+    private animating = new Map<number, { from: number; to: number; t: number }>();
+    private pendingRender = false;
+    private isAnimating = false;
+    private lastFrame = 0;
+    private winShown = false;
+    private hint: number[] | null = null;
+
+    constructor(canvas: HTMLCanvasElement) {
+      this.canvas = canvas;
+      this.ctx = canvas.getContext('2d')!;
+      this.tokens = readTokens();
+      this.init();
+    }
+
+    private init() {
+      this.setupCanvas();
+      this.newPuzzle();
+      this.bindEvents();
+      this.render();
+    }
+
+    private setupCanvas() {
+      const { cellSize, cellGap } = this.tokens;
+      // Compute canvas size from a temporary state to get dimensions
+      const shape = generateOrganicShape(5);
+      const tempState = createGameState(
+        shape,
+        { gridSize: 5, modulus: 2, cellSize, cellGap },
+        0, 0,
+      );
+      const dim = gridDimensions(tempState);
+      const padding = 20;
+      const w = dim.w + padding * 2;
+      const h = dim.h + padding * 2;
+
+      const dpr = window.devicePixelRatio || 1;
+      this.canvas.width = w * dpr;
+      this.canvas.height = h * dpr;
+      this.canvas.style.width = `${w}px`;
+      this.canvas.style.height = `${h}px`;
+      this.ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    }
+
+    newPuzzle() {
+      const { cellSize, cellGap } = this.tokens;
+      const shape = generateOrganicShape(5);
+      const dim = gridDimensions(
+        createGameState(shape, { gridSize: 5, modulus: 2, cellSize, cellGap }, 0, 0),
+      );
+      const padding = 20;
+      const canvasW = dim.w + padding * 2;
+      const canvasH = dim.h + padding * 2;
+
+      const dpr = window.devicePixelRatio || 1;
+      this.canvas.width = canvasW * dpr;
+      this.canvas.height = canvasH * dpr;
+      this.canvas.style.width = `${canvasW}px`;
+      this.canvas.style.height = `${canvasH}px`;
+      this.ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+
+      this.state = createGameState(
+        shape,
+        { gridSize: 5, modulus: 2, cellSize, cellGap },
+        padding,
+        padding,
+      );
+      this.state = generatePuzzle(this.state);
+      this.confetti = [];
+      this.animating.clear();
+      this.winShown = false;
+      this.hint = null;
+      this.updateMoveCounter();
+      this.render();
+    }
+
+    toggleHint() {
+      if (this.hint) {
+        this.hint = null;
+      } else {
+        this.hint = solveLightsOutGrid(this.state);
+      }
+      this.render();
+    }
+
+    private bindEvents() {
+      this.canvas.addEventListener('pointerdown', (e) => this.onClick(e));
+    }
+
+    private onClick(e: PointerEvent) {
+      if (this.state.solved) return;
+      const rect = this.canvas.getBoundingClientRect();
+      const x = e.clientX - rect.left;
+      const y = e.clientY - rect.top;
+      const idx = hitTestCell(this.state, x, y);
+      if (idx === null) return;
+
+      // Record animations for affected cells
+      const affected = [idx, ...this.state.cells[idx].neighbors];
+      for (const i of affected) {
+        this.animating.set(i, {
+          from: this.state.cells[i].state,
+          to: (this.state.cells[i].state + 1) % this.state.config.modulus,
+          t: 0,
+        });
+      }
+
+      this.state = toggleCell(this.state, idx);
+      this.hint = null;
+      this.updateMoveCounter();
+
+      if (this.state.solved && !this.winShown) {
+        this.winShown = true;
+        // Compute center of grid for confetti origin
+        const dim = gridDimensions(this.state);
+        const cx = parseFloat(this.canvas.style.width) / 2;
+        const cy = parseFloat(this.canvas.style.height) / 2;
+        this.confetti = spawnConfetti(
+          cx, cy,
+          this.tokens.confettiCount,
+          this.tokens.confettiSpread,
+          CONFETTI_COLORS,
+        );
+      }
+
+      this.startAnimation();
+    }
+
+    private startAnimation() {
+      if (!this.isAnimating) {
+        this.isAnimating = true;
+        this.lastFrame = performance.now();
+        this.scheduleRender();
+      }
+    }
+
+    private scheduleRender() {
+      if (this.pendingRender) return;
+      this.pendingRender = true;
+      requestAnimationFrame((t) => {
+        this.pendingRender = false;
+        const dt = Math.min((t - this.lastFrame) / 1000, 0.05);
+        this.lastFrame = t;
+
+        // Advance cell animations
+        let cellsAnimating = false;
+        for (const [idx, anim] of this.animating) {
+          anim.t += dt / this.tokens.toggleDuration;
+          if (anim.t >= 1) {
+            this.animating.delete(idx);
+          } else {
+            cellsAnimating = true;
+          }
+        }
+
+        // Advance confetti
+        const confettiAlive = stepConfetti(
+          this.confetti, dt, this.tokens.confettiGravity,
+        );
+
+        this.render();
+
+        if (cellsAnimating || confettiAlive > 0) {
+          this.scheduleRender();
+        } else {
+          this.isAnimating = false;
+        }
+      });
+    }
+
+    private updateMoveCounter() {
+      const el = document.getElementById('lo-moves');
+      if (el) el.textContent = `moves: ${this.state.moves}`;
+    }
+
+    private render() {
+      const ctx = this.ctx;
+      const w = parseFloat(this.canvas.style.width);
+      const h = parseFloat(this.canvas.style.height);
+      ctx.clearRect(0, 0, w, h);
+
+      const { cellSize, cellRadius, colorOn, colorOff, colorOnGlow, borderColor } = this.tokens;
+      const half = cellSize / 2;
+
+      for (let i = 0; i < this.state.cells.length; i++) {
+        const cell = this.state.cells[i];
+        const anim = this.animating.get(i);
+
+        let litAmount: number;
+        if (anim) {
+          // Interpolate
+          const fromLit = anim.from !== 0 ? 1 : 0;
+          const toLit = anim.to !== 0 ? 1 : 0;
+          litAmount = fromLit + (toLit - fromLit) * Math.min(anim.t, 1);
+        } else {
+          litAmount = cell.state !== 0 ? 1 : 0;
+        }
+
+        const x = cell.x - half;
+        const y = cell.y - half;
+
+        // Glow for lit cells
+        if (litAmount > 0.1) {
+          ctx.save();
+          ctx.shadowColor = colorOnGlow;
+          ctx.shadowBlur = 12 * litAmount;
+          ctx.fillStyle = colorOnGlow;
+          this.roundRect(ctx, x, y, cellSize, cellSize, cellRadius);
+          ctx.fill();
+          ctx.restore();
+        }
+
+        // Cell fill
+        ctx.save();
+        ctx.fillStyle = lerpColor(colorOff, colorOn, litAmount);
+        ctx.globalAlpha = 0.5 + litAmount * 0.5; // 0.5 when off, 1.0 when on
+        this.roundRect(ctx, x, y, cellSize, cellSize, cellRadius);
+        ctx.fill();
+        ctx.restore();
+
+        // Border
+        ctx.save();
+        ctx.strokeStyle = borderColor;
+        ctx.lineWidth = 1;
+        ctx.globalAlpha = 0.3 + litAmount * 0.3;
+        this.roundRect(ctx, x, y, cellSize, cellSize, cellRadius);
+        ctx.stroke();
+        ctx.restore();
+      }
+
+      // Hint dots
+      if (this.hint) {
+        for (let i = 0; i < this.state.cells.length; i++) {
+          if (this.hint[i] > 0) {
+            const cell = this.state.cells[i];
+            ctx.save();
+            ctx.beginPath();
+            ctx.arc(cell.x, cell.y, 5, 0, Math.PI * 2);
+            ctx.fillStyle = '#cc3333';
+            ctx.globalAlpha = 0.85;
+            ctx.fill();
+            ctx.restore();
+          }
+        }
+      }
+
+      // Confetti
+      for (const p of this.confetti) {
+        if (p.life <= 0) continue;
+        ctx.save();
+        ctx.globalAlpha = Math.max(0, p.life);
+        ctx.translate(p.x, p.y);
+        ctx.rotate(p.angle);
+        ctx.fillStyle = p.color;
+        ctx.fillRect(-p.w / 2, -p.h / 2, p.w, p.h);
+        ctx.restore();
+      }
+
+      // Win text
+      if (this.state.solved && this.winShown) {
+        ctx.save();
+        ctx.font = `700 1rem ${getComputedStyle(document.documentElement).getPropertyValue('--font-mono').trim() || 'monospace'}`;
+        ctx.fillStyle = this.tokens.colorOn;
+        ctx.textAlign = 'center';
+        ctx.globalAlpha = 0.8;
+        ctx.fillText('solved!', w / 2, h - 4);
+        ctx.restore();
+      }
+    }
+
+    private roundRect(
+      ctx: CanvasRenderingContext2D,
+      x: number, y: number, w: number, h: number, r: number,
+    ) {
+      ctx.beginPath();
+      ctx.moveTo(x + r, y);
+      ctx.lineTo(x + w - r, y);
+      ctx.quadraticCurveTo(x + w, y, x + w, y + r);
+      ctx.lineTo(x + w, y + h - r);
+      ctx.quadraticCurveTo(x + w, y + h, x + w - r, y + h);
+      ctx.lineTo(x + r, y + h);
+      ctx.quadraticCurveTo(x, y + h, x, y + h - r);
+      ctx.lineTo(x, y + r);
+      ctx.quadraticCurveTo(x, y, x + r, y);
+      ctx.closePath();
+    }
+  }
+
+  // ═══════════════════════════════════════════════════════════
+  //  3-D GRAPH RENDERER
+  // ═══════════════════════════════════════════════════════════
+
+  class Graph3DRenderer {
+    private canvas: HTMLCanvasElement;
+    private ctx: CanvasRenderingContext2D;
+    private tokens: ReturnType<typeof readTokens>;
+    private state!: Graph3DState;
+    private focalLength = 400;
+    private dragging = false;
+    private lastPointer = { x: 0, y: 0 };
+    private dragMoved = false;
+    private autoRotate = true;
+    private pendingRender = false;
+    private animating = false;
+    private lastFrame = 0;
+    private confetti: ConfettiParticle[] = [];
+    private winShown = false;
+    private hint: number[] | null = null;
+    private velX = 0;
+    private velY = 0;
+
+    constructor(canvas: HTMLCanvasElement) {
+      this.canvas = canvas;
+      this.ctx = canvas.getContext('2d')!;
+      this.tokens = readTokens();
+      this.setup();
+    }
+
+    private setup() {
+      const size = 320;
+      const dpr = window.devicePixelRatio || 1;
+      this.canvas.width = size * dpr;
+      this.canvas.height = size * dpr;
+      this.canvas.style.width = `${size}px`;
+      this.canvas.style.height = `${size}px`;
+      this.ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+
+      this.newGraph();
+      this.bindEvents();
+      this.startAnimation();
+    }
+
+    newGraph() {
+      const { nodes, edges, adjacency } = generateSpiderWebGraph(3, 8, 100, 35);
+      this.state = {
+        nodes, edges, adjacency,
+        rotX: 0.3, rotY: 0,
+        solved: true, moves: 0,
+      };
+      this.state = generateGraph3DPuzzle(this.state);
+      this.confetti = [];
+      this.winShown = false;
+      this.hint = null;
+      this.autoRotate = true;
+      this.updateMoveCounter();
+      this.render();
+    }
+
+    toggleHint() {
+      if (this.hint) {
+        this.hint = null;
+      } else {
+        this.hint = solveGraph3D(this.state);
+      }
+    }
+
+    private bindEvents() {
+      this.canvas.addEventListener('pointerdown', (e) => {
+        this.dragging = true;
+        this.dragMoved = false;
+        this.lastPointer = { x: e.clientX, y: e.clientY };
+        this.autoRotate = false;
+        this.canvas.setPointerCapture(e.pointerId);
+      });
+
+      this.canvas.addEventListener('pointermove', (e) => {
+        if (!this.dragging) return;
+        const dx = e.clientX - this.lastPointer.x;
+        const dy = e.clientY - this.lastPointer.y;
+        if (Math.abs(dx) + Math.abs(dy) > 3) this.dragMoved = true;
+        const dRotY = -dx * this.tokens.rotateSpeed;
+        const dRotX = dy * this.tokens.rotateSpeed;
+        this.state.rotY += dRotY;
+        this.state.rotX += dRotX;
+        this.velY = dRotY;
+        this.velX = dRotX;
+        this.lastPointer = { x: e.clientX, y: e.clientY };
+      });
+
+      this.canvas.addEventListener('pointerup', (e) => {
+        this.dragging = false;
+        if (!this.dragMoved && !this.state.solved) {
+          const rect = this.canvas.getBoundingClientRect();
+          const px = e.clientX - rect.left;
+          const py = e.clientY - rect.top;
+          const idx = hitTestGraphNode(this.state.nodes, px, py, this.tokens.nodeRadius + 12);
+          if (idx !== null) {
+            this.state = toggleGraphNode(this.state, idx);
+            this.hint = null;
+            this.updateMoveCounter();
+            if (this.state.solved && !this.winShown) {
+              this.winShown = true;
+              this.confetti = spawnConfetti(160, 160, 40, 200, CONFETTI_COLORS);
+            }
+          }
+        }
+      });
+    }
+
+    private startAnimation() {
+      this.animating = true;
+      this.lastFrame = performance.now();
+      this.animate();
+    }
+
+    private animate() {
+      if (!this.animating) return;
+      requestAnimationFrame((t) => {
+        const dt = Math.min((t - this.lastFrame) / 1000, 0.05);
+        this.lastFrame = t;
+
+        if (this.autoRotate) {
+          this.state.rotY += 0.3 * dt;
+        } else if (!this.dragging && (Math.abs(this.velX) > 0.0001 || Math.abs(this.velY) > 0.0001)) {
+          this.state.rotY += this.velY;
+          this.state.rotX += this.velX;
+          const decay = Math.pow(0.04, dt); // smooth exponential decay
+          this.velX *= decay;
+          this.velY *= decay;
+        }
+
+        stepConfetti(this.confetti, dt, this.tokens.confettiGravity);
+        this.render();
+        this.animate();
+      });
+    }
+
+    stop() {
+      this.animating = false;
+    }
+
+    private updateMoveCounter() {
+      const el = document.getElementById('lo-3d-moves');
+      if (el) el.textContent = `moves: ${this.state.moves}`;
+    }
+
+    private render() {
+      const ctx = this.ctx;
+      const size = 320;
+      ctx.clearRect(0, 0, size, size);
+
+      const cx = size / 2;
+      const cy = size / 2;
+      projectNodes(this.state.nodes, this.state.rotX, this.state.rotY, this.focalLength, cx, cy);
+
+      // Draw edges (sorted by average depth, back to front)
+      const sortedEdges = [...this.state.edges].sort((a, b) => {
+        const da = (this.state.nodes[a.a].depth + this.state.nodes[a.b].depth) / 2;
+        const db = (this.state.nodes[b.a].depth + this.state.nodes[b.b].depth) / 2;
+        return db - da; // back first
+      });
+
+      for (const e of sortedEdges) {
+        const na = this.state.nodes[e.a];
+        const nb = this.state.nodes[e.b];
+        const avgDepth = (na.depth + nb.depth) / 2;
+        const alpha = 0.15 + 0.25 * (1 - avgDepth / 200);
+        ctx.beginPath();
+        ctx.moveTo(na.screenX, na.screenY);
+        ctx.lineTo(nb.screenX, nb.screenY);
+        ctx.strokeStyle = this.tokens.edgeColor;
+        ctx.lineWidth = 1;
+        ctx.globalAlpha = Math.max(0.08, Math.min(0.5, alpha));
+        ctx.stroke();
+      }
+
+      // Draw nodes (sorted by depth, back to front)
+      const sortedIndices = this.state.nodes
+        .map((_, i) => i)
+        .sort((a, b) => this.state.nodes[b].depth - this.state.nodes[a].depth);
+
+      for (const i of sortedIndices) {
+        const n = this.state.nodes[i];
+        const scale = this.focalLength / (n.depth + this.focalLength);
+        const r = this.tokens.nodeRadius * scale;
+        const alpha = 0.4 + 0.6 * scale;
+
+        ctx.globalAlpha = Math.max(0.2, Math.min(1, alpha));
+
+        // Glow for lit nodes
+        if (n.state !== 0) {
+          ctx.save();
+          ctx.shadowColor = this.tokens.nodeOn;
+          ctx.shadowBlur = 8 * scale;
+          ctx.beginPath();
+          ctx.arc(n.screenX, n.screenY, r + 2, 0, Math.PI * 2);
+          ctx.fillStyle = 'rgba(196,122,42,0.2)';
+          ctx.fill();
+          ctx.restore();
+        }
+
+        ctx.beginPath();
+        ctx.arc(n.screenX, n.screenY, r, 0, Math.PI * 2);
+        ctx.fillStyle = n.state !== 0 ? this.tokens.nodeOn : this.tokens.nodeOff;
+        ctx.fill();
+
+        ctx.strokeStyle = this.tokens.edgeColor;
+        ctx.lineWidth = 0.5;
+        ctx.globalAlpha = Math.max(0.15, alpha * 0.4);
+        ctx.stroke();
+      }
+
+      ctx.globalAlpha = 1;
+
+      // Hint dots
+      if (this.hint) {
+        for (let i = 0; i < this.state.nodes.length; i++) {
+          if (this.hint[i] > 0) {
+            const n = this.state.nodes[i];
+            const scale = this.focalLength / (n.depth + this.focalLength);
+            ctx.save();
+            ctx.beginPath();
+            ctx.arc(n.screenX, n.screenY, 3.5 * scale, 0, Math.PI * 2);
+            ctx.fillStyle = '#cc3333';
+            ctx.globalAlpha = 0.9;
+            ctx.fill();
+            ctx.restore();
+          }
+        }
+      }
+
+      // Confetti
+      for (const p of this.confetti) {
+        if (p.life <= 0) continue;
+        ctx.save();
+        ctx.globalAlpha = Math.max(0, p.life);
+        ctx.translate(p.x, p.y);
+        ctx.rotate(p.angle);
+        ctx.fillStyle = p.color;
+        ctx.fillRect(-p.w / 2, -p.h / 2, p.w, p.h);
+        ctx.restore();
+      }
+
+      // Win text
+      if (this.state.solved && this.winShown) {
+        ctx.save();
+        ctx.font = `700 0.8rem ${getComputedStyle(document.documentElement).getPropertyValue('--font-mono').trim() || 'monospace'}`;
+        ctx.fillStyle = this.tokens.nodeOn;
+        ctx.textAlign = 'center';
+        ctx.globalAlpha = 0.8;
+        ctx.fillText('solved!', cx, size - 8);
+        ctx.restore();
+      }
+    }
+  }
+
+  // ═══════════════════════════════════════════════════════════
+  //  MOD-K RENDERER
+  // ═══════════════════════════════════════════════════════════
+
+  class ModKRenderer {
+    private canvas: HTMLCanvasElement;
+    private ctx: CanvasRenderingContext2D;
+    private tokens: ReturnType<typeof readTokens>;
+    private state!: LightsOutState;
+    private k = 3;
+    private confetti: ConfettiParticle[] = [];
+    private pendingRender = false;
+    private isAnimating = false;
+    private lastFrame = 0;
+    private winShown = false;
+    private hint: number[] | null = null;
+
+    constructor(canvas: HTMLCanvasElement) {
+      this.canvas = canvas;
+      this.ctx = canvas.getContext('2d')!;
+      this.tokens = readTokens();
+      this.setup();
+    }
+
+    private setup() {
+      this.newPuzzle();
+      this.bindEvents();
+    }
+
+    setK(k: number) {
+      this.k = k;
+      this.newPuzzle();
+    }
+
+    newPuzzle() {
+      const { cellSize, cellGap } = this.tokens;
+      const shape = generateOrganicShape(5);
+      const padding = 16;
+
+      const tempState = createGameState(
+        shape,
+        { gridSize: 5, modulus: this.k, cellSize, cellGap },
+        0, 0,
+      );
+      const dim = gridDimensions(tempState);
+      const canvasW = dim.w + padding * 2;
+      const canvasH = dim.h + padding * 2;
+
+      const dpr = window.devicePixelRatio || 1;
+      this.canvas.width = canvasW * dpr;
+      this.canvas.height = canvasH * dpr;
+      this.canvas.style.width = `${canvasW}px`;
+      this.canvas.style.height = `${canvasH}px`;
+      this.ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+
+      this.state = createGameState(
+        shape,
+        { gridSize: 5, modulus: this.k, cellSize, cellGap },
+        padding, padding,
+      );
+      this.state = generatePuzzle(this.state);
+      this.confetti = [];
+      this.winShown = false;
+      this.hint = null;
+      this.updateMoveCounter();
+      this.render();
+    }
+
+    toggleHint() {
+      if (this.hint) {
+        this.hint = null;
+      } else {
+        this.hint = solveLightsOutGrid(this.state);
+      }
+      this.render();
+    }
+
+    private bindEvents() {
+      this.canvas.addEventListener('pointerdown', (e) => this.onClick(e));
+    }
+
+    private onClick(e: PointerEvent) {
+      if (this.state.solved) return;
+      const rect = this.canvas.getBoundingClientRect();
+      const x = e.clientX - rect.left;
+      const y = e.clientY - rect.top;
+      const idx = hitTestCell(this.state, x, y);
+      if (idx === null) return;
+
+      this.state = toggleCell(this.state, idx);
+      this.hint = null;
+      this.updateMoveCounter();
+
+      if (this.state.solved && !this.winShown) {
+        this.winShown = true;
+        const cw = parseFloat(this.canvas.style.width);
+        const ch = parseFloat(this.canvas.style.height);
+        this.confetti = spawnConfetti(cw / 2, ch / 2, 40, 200, CONFETTI_COLORS);
+        this.startAnimation();
+      }
+
+      this.render();
+    }
+
+    private startAnimation() {
+      if (this.isAnimating) return;
+      this.isAnimating = true;
+      this.lastFrame = performance.now();
+      this.animateConfetti();
+    }
+
+    private animateConfetti() {
+      if (!this.isAnimating) return;
+      this.pendingRender = true;
+      requestAnimationFrame((t) => {
+        this.pendingRender = false;
+        const dt = Math.min((t - this.lastFrame) / 1000, 0.05);
+        this.lastFrame = t;
+        const alive = stepConfetti(this.confetti, dt, this.tokens.confettiGravity);
+        this.render();
+        if (alive > 0) {
+          this.animateConfetti();
+        } else {
+          this.isAnimating = false;
+        }
+      });
+    }
+
+    private updateMoveCounter() {
+      const el = document.getElementById('lo-modk-moves');
+      if (el) el.textContent = `moves: ${this.state.moves}`;
+    }
+
+    private render() {
+      const ctx = this.ctx;
+      const w = parseFloat(this.canvas.style.width);
+      const h = parseFloat(this.canvas.style.height);
+      ctx.clearRect(0, 0, w, h);
+
+      const { cellSize, cellRadius, borderColor, modkColors } = this.tokens;
+      const half = cellSize / 2;
+      const fontMono = getComputedStyle(document.documentElement)
+        .getPropertyValue('--font-mono').trim() || 'monospace';
+
+      for (const cell of this.state.cells) {
+        const x = cell.x - half;
+        const y = cell.y - half;
+        const colorIdx = Math.min(cell.state, modkColors.length - 1);
+        const color = modkColors[colorIdx];
+
+        // Fill
+        ctx.save();
+        ctx.fillStyle = color;
+        ctx.globalAlpha = cell.state === 0 ? 0.5 : 0.7 + (cell.state / (this.k - 1)) * 0.3;
+        roundRect(ctx, x, y, cellSize, cellSize, cellRadius);
+        ctx.fill();
+        ctx.restore();
+
+        // Border
+        ctx.save();
+        ctx.strokeStyle = borderColor;
+        ctx.lineWidth = 1;
+        ctx.globalAlpha = 0.3;
+        roundRect(ctx, x, y, cellSize, cellSize, cellRadius);
+        ctx.stroke();
+        ctx.restore();
+
+        // Number label
+        ctx.save();
+        ctx.font = `600 ${cellSize * 0.35}px ${fontMono}`;
+        ctx.fillStyle = cell.state === 0 ? '#666' : '#f0e8d8';
+        ctx.textAlign = 'center';
+        ctx.textBaseline = 'middle';
+        ctx.globalAlpha = cell.state === 0 ? 0.4 : 0.9;
+        ctx.fillText(String(cell.state), cell.x, cell.y);
+        ctx.restore();
+      }
+
+      // Hint numbers (red, below cell label)
+      if (this.hint) {
+        for (let i = 0; i < this.state.cells.length; i++) {
+          if (this.hint[i] > 0) {
+            const cell = this.state.cells[i];
+            ctx.save();
+            ctx.font = `700 ${cellSize * 0.28}px ${fontMono}`;
+            ctx.fillStyle = '#cc3333';
+            ctx.textAlign = 'center';
+            ctx.textBaseline = 'middle';
+            ctx.globalAlpha = 0.9;
+            ctx.fillText(String(this.hint[i]), cell.x, cell.y + cellSize * 0.28);
+            ctx.restore();
+          }
+        }
+      }
+
+      // Confetti
+      for (const p of this.confetti) {
+        if (p.life <= 0) continue;
+        ctx.save();
+        ctx.globalAlpha = Math.max(0, p.life);
+        ctx.translate(p.x, p.y);
+        ctx.rotate(p.angle);
+        ctx.fillStyle = p.color;
+        ctx.fillRect(-p.w / 2, -p.h / 2, p.w, p.h);
+        ctx.restore();
+      }
+
+      // Win text
+      if (this.state.solved && this.winShown) {
+        ctx.save();
+        ctx.font = `700 0.8rem ${fontMono}`;
+        ctx.fillStyle = this.tokens.colorOn;
+        ctx.textAlign = 'center';
+        ctx.globalAlpha = 0.8;
+        ctx.fillText('solved!', w / 2, h - 4);
+        ctx.restore();
+      }
+    }
+  }
+
+  // ═══════════════════════════════════════════════════════════
+  //  HELPERS
+  // ═══════════════════════════════════════════════════════════
+
+  function lerpColor(a: string, b: string, t: number): string {
+    const parse = (hex: string) => {
+      const h = hex.replace('#', '');
+      return [
+        parseInt(h.substring(0, 2), 16),
+        parseInt(h.substring(2, 4), 16),
+        parseInt(h.substring(4, 6), 16),
+      ];
+    };
+    const [ar, ag, ab] = parse(a);
+    const [br, bg, bb] = parse(b);
+    const r = Math.round(ar + (br - ar) * t);
+    const g = Math.round(ag + (bg - ag) * t);
+    const bl = Math.round(ab + (bb - ab) * t);
+    return `rgb(${r},${g},${bl})`;
+  }
+
+  function roundRect(
+    ctx: CanvasRenderingContext2D,
+    x: number, y: number, w: number, h: number, r: number,
+  ) {
+    ctx.beginPath();
+    ctx.moveTo(x + r, y);
+    ctx.lineTo(x + w - r, y);
+    ctx.quadraticCurveTo(x + w, y, x + w, y + r);
+    ctx.lineTo(x + w, y + h - r);
+    ctx.quadraticCurveTo(x + w, y + h, x + w - r, y + h);
+    ctx.lineTo(x + r, y + h);
+    ctx.quadraticCurveTo(x, y + h, x, y + h - r);
+    ctx.lineTo(x, y + r);
+    ctx.quadraticCurveTo(x, y, x + r, y);
+    ctx.closePath();
+  }
+
+  // ═══════════════════════════════════════════════════════════
+  //  INIT
+  // ═══════════════════════════════════════════════════════════
+
+  const canvas = document.getElementById('lo-canvas') as HTMLCanvasElement | null;
+  if (canvas) {
+    const renderer = new LightsOutRenderer(canvas);
+
+    // Controls
+    document.getElementById('lo-new-puzzle')?.addEventListener('click', () => {
+      renderer.newPuzzle();
+    });
+    document.getElementById('lo-hint')?.addEventListener('click', () => {
+      renderer.toggleHint();
+    });
+
+    // Overlay
+    const dialog = document.getElementById('lo-overlay') as HTMLDialogElement | null;
+    let graph3d: Graph3DRenderer | null = null;
+    let modK: ModKRenderer | null = null;
+
+    function openOverlay() {
+      if (!dialog) return;
+      dialog.showModal();
+      document.body.style.overflow = 'hidden';
+      // Lazy-init renderers on first open
+      if (!graph3d) {
+        const c = document.getElementById('lo-3d-canvas') as HTMLCanvasElement;
+        if (c) graph3d = new Graph3DRenderer(c);
+      }
+      if (!modK) {
+        const c = document.getElementById('lo-modk-canvas') as HTMLCanvasElement;
+        if (c) modK = new ModKRenderer(c);
+      }
+    }
+
+    function closeOverlay() {
+      if (!dialog) return;
+      dialog.close();
+      document.body.style.overflow = '';
+    }
+
+    document.getElementById('lo-help')?.addEventListener('click', openOverlay);
+    document.getElementById('lo-overlay-close')?.addEventListener('click', closeOverlay);
+
+    // Close on backdrop click
+    dialog?.addEventListener('click', (e) => {
+      if (e.target === dialog) closeOverlay();
+    });
+
+    // Escape key (backup — dialog.showModal() handles this natively,
+    // but the grain overlay z-index can interfere)
+    dialog?.addEventListener('cancel', () => {
+      document.body.style.overflow = '';
+    });
+
+    // 3D new graph
+    document.getElementById('lo-3d-new')?.addEventListener('click', () => {
+      graph3d?.newGraph();
+    });
+    document.getElementById('lo-3d-hint')?.addEventListener('click', () => {
+      graph3d?.toggleHint();
+    });
+
+    // Mod-K controls
+    document.querySelectorAll<HTMLButtonElement>('.lo-modk-k').forEach((btn) => {
+      btn.addEventListener('click', () => {
+        document.querySelectorAll('.lo-modk-k').forEach((b) => b.classList.remove('active'));
+        btn.classList.add('active');
+        const k = parseInt(btn.dataset.k || '3');
+        modK?.setK(k);
+      });
+    });
+
+    document.getElementById('lo-modk-new')?.addEventListener('click', () => {
+      modK?.newPuzzle();
+    });
+    document.getElementById('lo-modk-hint')?.addEventListener('click', () => {
+      modK?.toggleHint();
+    });
+  }
+</script>
+
+<style>
+  /* ─── Container ─────────────────────────────────────────── */
+
+  .lo-container {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    margin-top: 2rem;
+  }
+
+  .lo-canvas {
+    display: block;
+    cursor: pointer;
+  }
+
+  /* ─── Controls (toy controls pattern) ───────────────────── */
+
+  .lo-controls {
+    display: flex;
+    align-items: center;
+    gap: 0.75rem;
+    margin-top: 0.5rem;
+    opacity: var(--lo-controls-opacity, 0.3);
+    transition: opacity 0.3s;
+  }
+
+  .lo-controls:hover,
+  .lo-controls:focus-within {
+    opacity: var(--lo-controls-hover-opacity, 0.7);
+  }
+
+  .lo-mode-bar {
+    display: flex;
+    gap: 1px;
+    border: 1px solid var(--lo-border-color, #3a3020);
+    border-radius: 4px;
+    overflow: hidden;
+  }
+
+  .lo-btn {
+    font-family: var(--font-mono);
+    font-size: 0.6rem;
+    color: var(--lo-border-color, #3a3020);
+    background: transparent;
+    border: none;
+    border-right: 1px solid var(--lo-border-color, #3a3020);
+    padding: 3px 8px;
+    cursor: pointer;
+    line-height: 1;
+    transition: background 0.15s, color 0.15s;
+  }
+
+  .lo-btn:last-child {
+    border-right: none;
+  }
+
+  .lo-btn:hover,
+  .lo-btn.active {
+    background: var(--lo-border-color, #3a3020);
+    color: var(--color-bg-light, #BCC6AF);
+  }
+
+  .lo-move-counter {
+    font-family: var(--font-mono);
+    font-size: 0.55rem;
+    color: var(--lo-border-color, #3a3020);
+    line-height: 1;
+  }
+
+  /* ─── Overlay ───────────────────────────────────────────── */
+
+  .lo-overlay {
+    border: none;
+    border-radius: 16px;
+    background: var(--lo-overlay-bg, #adb99f);
+    color: var(--color-text-primary, #252525);
+    max-width: var(--lo-overlay-max-width, 760px);
+    width: calc(100% - 3rem);
+    height: calc(100vh - 3rem);
+    margin: auto;
+    padding: 0;
+    overflow: hidden;
+    box-shadow: 0 12px 48px rgba(0, 0, 0, 0.3);
+  }
+
+  .lo-overlay::backdrop {
+    background: rgba(0, 0, 0, 0.35);
+    backdrop-filter: blur(4px);
+  }
+
+  .lo-overlay-inner {
+    padding: 2.5rem 3rem 3rem;
+    overflow-y: auto;
+    height: 100%;
+    box-sizing: border-box;
+    scrollbar-width: none;          /* Firefox */
+    -ms-overflow-style: none;       /* IE/Edge */
+  }
+
+  .lo-overlay-inner::-webkit-scrollbar {
+    display: none;                  /* Chrome/Safari */
+  }
+
+  .lo-overlay-close {
+    position: absolute;
+    top: 1rem;
+    right: 1.25rem;
+    background: none;
+    border: none;
+    color: var(--color-text-primary, #252525);
+    font-size: 1.5rem;
+    cursor: pointer;
+    opacity: 0.35;
+    transition: opacity 0.2s;
+    line-height: 1;
+  }
+
+  .lo-overlay-close:hover {
+    opacity: 0.8;
+  }
+
+  .lo-overlay-title {
+    font-family: var(--font-heading, serif);
+    font-size: 1.6rem;
+    font-weight: 700;
+    margin: 0 0 1.25rem;
+    color: var(--color-text-primary, #252525);
+  }
+
+  /* ─── Overlay body text ─────────────────────────────────── */
+
+  .lo-overlay-inner > p {
+    font-family: var(--font-body, serif);
+    font-size: 0.9rem;
+    line-height: 1.75;
+    margin: 0 0 0.9rem;
+    color: var(--color-text-primary, #252525);
+  }
+
+  .lo-overlay-inner > h3 {
+    font-family: var(--font-heading, serif);
+    font-size: 1.1rem;
+    font-weight: 700;
+    color: var(--color-text-primary, #252525);
+    margin: 2rem 0 0.6rem;
+  }
+
+  /* ─── Math blocks ───────────────────────────────────────── */
+
+  .lo-math-block {
+    font-family: var(--font-mono);
+    font-size: 0.8rem;
+    text-align: center;
+    padding: 0.6rem 1rem;
+    margin: 0.8rem 0;
+    background: rgba(255, 255, 255, 0.15);
+    border-radius: 6px;
+    border-left: 3px solid var(--lo-border-color, #3a3020);
+    color: var(--color-text-primary, #252525);
+  }
+
+  /* ─── Interactive sections (3D graph, mod-K) ────────────── */
+
+  .lo-section-interactive {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    margin: 1rem 0 0.5rem;
+    padding: 1rem;
+    background: rgba(255, 255, 255, 0.08);
+    border-radius: 12px;
+  }
+
+  .lo-section-controls {
+    display: flex;
+    align-items: center;
+    gap: 0.75rem;
+    margin-top: 0.5rem;
+  }
+
+  .lo-3d-canvas,
+  .lo-modk-canvas {
+    display: block;
+    cursor: pointer;
+  }
+
+  .lo-3d-canvas {
+    cursor: grab;
+  }
+
+  .lo-3d-canvas:active {
+    cursor: grabbing;
+  }
+
+  /* ─── Responsive ────────────────────────────────────────── */
+
+  @media (max-width: 500px) {
+    .lo-overlay {
+      width: calc(100% - 1.5rem);
+      height: calc(100vh - 1.5rem);
+      border-radius: 12px;
+    }
+
+    .lo-overlay-inner {
+      padding: 1.5rem 1.25rem 2rem;
+    }
+
+    .lo-3d-canvas,
+    .lo-modk-canvas {
+      max-width: 100%;
+    }
+  }
+</style>

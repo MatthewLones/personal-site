@@ -1,0 +1,371 @@
+---
+---
+
+<!-- Gradient canvas: filled once, progressively erased to reveal site -->
+<canvas id="loading-gradient-canvas" class="loading-screen" aria-hidden="true"></canvas>
+<!-- Leaf canvas: cleared + redrawn each frame with leaf particles -->
+<canvas id="loading-leaf-canvas" class="loading-screen" aria-hidden="true"></canvas>
+
+<style>
+  .loading-screen {
+    position: fixed;
+    inset: 0;
+    z-index: var(--ls-z-index, 9998);
+    pointer-events: none;
+    width: 100vw;
+    height: 100vh;
+  }
+  #loading-gradient-canvas {
+    /* CSS fallback: visible instantly before JS fills the canvas */
+    background: var(--gradient-bg);
+  }
+</style>
+
+<!-- Inline script: fills gradient canvas synchronously to prevent FOUC -->
+<script is:inline>
+(function () {
+  var c = document.getElementById('loading-gradient-canvas');
+  if (!c) return;
+  var ctx = c.getContext('2d');
+  if (!ctx) return;
+  var dpr = window.devicePixelRatio || 1;
+  var w = window.innerWidth;
+  var h = window.innerHeight;
+  c.width = w * dpr;
+  c.height = h * dpr;
+  c.style.width = w + 'px';
+  c.style.height = h + 'px';
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+
+  // "to bottom left" = from top-right (w, 0) to bottom-left (0, h)
+  var grad = ctx.createLinearGradient(w, 0, 0, h);
+  grad.addColorStop(0, '#BCC6AF');
+  grad.addColorStop(1, '#3C4531');
+  ctx.fillStyle = grad;
+  ctx.fillRect(0, 0, w, h);
+
+  // Remove CSS fallback now that canvas is painted
+  c.style.background = 'none';
+
+  // Size the leaf canvas too
+  var lc = document.getElementById('loading-leaf-canvas');
+  if (lc) {
+    lc.width = w * dpr;
+    lc.height = h * dpr;
+    lc.style.width = w + 'px';
+    lc.style.height = h + 'px';
+    var lctx = lc.getContext('2d');
+    if (lctx) lctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  }
+
+  // Initialize readiness registry
+  window.__loadingReady = {};
+})();
+</script>
+
+<!-- Module script: animation loop + readiness detection -->
+<script>
+  import {
+    createLeaves,
+    stepOrbit,
+    stepFanOut,
+    leafPosition,
+    isOffScreen,
+    type LoadingLeaf,
+  } from '../../lib/loading-screen';
+
+  class LoadingScreenRenderer {
+    private gradientCanvas: HTMLCanvasElement;
+    private gradientCtx: CanvasRenderingContext2D;
+    private leafCanvas: HTMLCanvasElement;
+    private leafCtx: CanvasRenderingContext2D;
+    private leaves: LoadingLeaf[];
+    private phase: 'orbit' | 'fanout' | 'cleanup' | 'done' = 'orbit';
+    private lastTime = 0;
+    private startTime = 0;
+    private fanOutTriggered = false;
+
+    // Token values (with fallbacks)
+    private leafCount = 14;
+    private leafColor = '#3a3020';
+    private leafOpacity = 0.6;
+    private orbitRadius = 30;
+    private orbitSpeed = 3.0;
+    private fanoutAccel = 400;
+    private eraserBase = 20;
+    private eraserGrowth = 40;
+    private eraserSoftness = 0.5;
+    private readyTimeout = 5000;
+    private minSpinTime = 800;
+
+    // Required components (adjusted for mobile)
+    private requiredComponents: string[];
+
+    constructor() {
+      const gc = document.getElementById('loading-gradient-canvas') as HTMLCanvasElement | null;
+      const lc = document.getElementById('loading-leaf-canvas') as HTMLCanvasElement | null;
+      if (!gc || !lc) return;
+
+      const gctx = gc.getContext('2d');
+      const lctx = lc.getContext('2d');
+      if (!gctx || !lctx) return;
+
+      this.gradientCanvas = gc;
+      this.gradientCtx = gctx;
+      this.leafCanvas = lc;
+      this.leafCtx = lctx;
+
+      this.readTokens();
+
+      // On mobile (margins hidden), only wait for hat-tiling
+      const isMobile = window.innerWidth <= 768;
+      this.requiredComponents = isMobile
+        ? ['hat-tiling']
+        : ['hat-tiling', 'vector-field', 'galton-board', 'double-pendulum'];
+
+      this.leaves = createLeaves(this.leafCount, this.orbitRadius, this.orbitSpeed);
+      this.startTime = performance.now();
+
+      this.setupReadiness();
+      this.startLoop();
+    }
+
+    private readTokens(): void {
+      const s = getComputedStyle(document.documentElement);
+      const str = (name: string) => s.getPropertyValue(name).trim();
+      const num = (name: string, fallback: number) => {
+        const v = parseFloat(str(name));
+        return isNaN(v) ? fallback : v;
+      };
+
+      this.leafCount = num('--ls-leaf-count', this.leafCount);
+      const color = str('--ls-leaf-color');
+      if (color) this.leafColor = color;
+      this.leafOpacity = num('--ls-leaf-opacity', this.leafOpacity);
+      this.orbitRadius = num('--ls-orbit-radius', this.orbitRadius);
+      this.orbitSpeed = num('--ls-orbit-speed', this.orbitSpeed);
+      this.fanoutAccel = num('--ls-fanout-accel', this.fanoutAccel);
+      this.eraserBase = num('--ls-eraser-base', this.eraserBase);
+      this.eraserGrowth = num('--ls-eraser-growth', this.eraserGrowth);
+      this.eraserSoftness = num('--ls-eraser-softness', this.eraserSoftness);
+      this.readyTimeout = num('--ls-ready-timeout', this.readyTimeout);
+      this.minSpinTime = num('--ls-min-spin-time', this.minSpinTime);
+    }
+
+    // ── Readiness detection ─────────────────────────────
+
+    private setupReadiness(): void {
+      const registry = (window as any).__loadingReady || {};
+      (window as any).__loadingReady = registry;
+
+      // Listen for component-ready events
+      window.addEventListener('component-ready', ((e: CustomEvent) => {
+        const id = e.detail?.id;
+        if (id) registry[id] = true;
+        this.checkReady();
+      }) as EventListener);
+
+      // Window load
+      window.addEventListener('load', () => {
+        registry.__windowLoaded = true;
+        this.checkReady();
+      });
+
+      // Fonts
+      document.fonts.ready.then(() => {
+        registry.__fontsReady = true;
+        this.checkReady();
+      });
+
+      // Safety timeout
+      setTimeout(() => {
+        if (!this.fanOutTriggered) this.triggerFanOut();
+      }, this.readyTimeout);
+    }
+
+    private checkReady(): void {
+      if (this.fanOutTriggered) return;
+
+      const registry = (window as any).__loadingReady;
+
+      // All required components must report ready
+      const allComponents = this.requiredComponents.every((id) => registry[id]);
+      if (!allComponents) return;
+      if (!registry.__windowLoaded) return;
+      if (!registry.__fontsReady) return;
+
+      // Enforce minimum spin time
+      const elapsed = performance.now() - this.startTime;
+      if (elapsed < this.minSpinTime) {
+        setTimeout(() => this.checkReady(), this.minSpinTime - elapsed);
+        return;
+      }
+
+      this.triggerFanOut();
+    }
+
+    private triggerFanOut(): void {
+      if (this.fanOutTriggered) return;
+      this.fanOutTriggered = true;
+      this.phase = 'fanout';
+      for (const leaf of this.leaves) {
+        leaf.phase = 'fanout';
+      }
+
+      // Erase the center area that orbiting leaves never touched
+      const w = window.innerWidth;
+      const h = window.innerHeight;
+      this.eraseAt(w / 2, h / 2, this.orbitRadius + this.eraserBase);
+    }
+
+    // ── Animation loop ──────────────────────────────────
+
+    private startLoop(): void {
+      this.lastTime = performance.now();
+      requestAnimationFrame(this.loop);
+    }
+
+    private loop = (now: number): void => {
+      if (this.phase === 'done') return;
+
+      const dt = Math.min(0.05, (now - this.lastTime) / 1000);
+      this.lastTime = now;
+
+      const w = window.innerWidth;
+      const h = window.innerHeight;
+      const cx = w / 2;
+      const cy = h / 2;
+
+      let allDone = true;
+
+      for (const leaf of this.leaves) {
+        if (leaf.phase === 'orbit') {
+          stepOrbit(leaf, dt);
+          allDone = false;
+        } else if (leaf.phase === 'fanout') {
+          stepFanOut(
+            leaf, dt, cx, cy,
+            this.fanoutAccel,
+            this.eraserBase,
+            this.eraserGrowth,
+            this.orbitRadius,
+          );
+
+          // Erase gradient at leaf position
+          const pos = leafPosition(leaf, cx, cy);
+          this.eraseAt(pos.x, pos.y, leaf.eraserSize);
+
+          if (isOffScreen(leaf, cx, cy, w, h)) {
+            leaf.phase = 'done';
+          } else {
+            allDone = false;
+          }
+        }
+        // 'done' leaves are skipped
+      }
+
+      // Clear and redraw leaf canvas
+      this.leafCtx.clearRect(0, 0, w, h);
+      for (const leaf of this.leaves) {
+        if (leaf.phase === 'done') continue;
+        const pos = leafPosition(leaf, cx, cy);
+        this.drawLeaf(pos.x, pos.y, leaf.selfAngle, leaf.size, leaf.variant);
+      }
+
+      if (allDone && this.phase === 'fanout') {
+        this.cleanup();
+      } else {
+        requestAnimationFrame(this.loop);
+      }
+    };
+
+    // ── Eraser ──────────────────────────────────────────
+
+    private eraseAt(x: number, y: number, radius: number): void {
+      if (radius <= 0) return;
+      const ctx = this.gradientCtx;
+      ctx.save();
+      ctx.globalCompositeOperation = 'destination-out';
+      const grad = ctx.createRadialGradient(x, y, 0, x, y, radius);
+      grad.addColorStop(0, 'rgba(0, 0, 0, 1)');
+      grad.addColorStop(this.eraserSoftness, 'rgba(0, 0, 0, 0.8)');
+      grad.addColorStop(1, 'rgba(0, 0, 0, 0)');
+      ctx.fillStyle = grad;
+      ctx.beginPath();
+      ctx.arc(x, y, radius, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.restore();
+    }
+
+    // ── Leaf rendering (3 variants, same as VectorField) ─
+
+    private drawLeaf(
+      x: number, y: number,
+      angle: number, size: number, variant: number,
+    ): void {
+      const ctx = this.leafCtx;
+      ctx.save();
+      ctx.translate(x, y);
+      ctx.rotate(angle);
+      ctx.globalAlpha = this.leafOpacity;
+      ctx.fillStyle = this.leafColor;
+
+      if (variant === 0) {
+        ctx.beginPath();
+        ctx.ellipse(0, 0, 1.5 * size, 3 * size, 0, 0, Math.PI * 2);
+        ctx.fill();
+      } else if (variant === 1) {
+        ctx.beginPath();
+        ctx.moveTo(0, -3 * size);
+        ctx.quadraticCurveTo(2 * size, 0, 0, 3 * size);
+        ctx.quadraticCurveTo(-2 * size, 0, 0, -3 * size);
+        ctx.fill();
+      } else {
+        ctx.beginPath();
+        ctx.arc(0, 0, 1.2 * size, 0, Math.PI * 2);
+        ctx.fill();
+      }
+
+      ctx.restore();
+    }
+
+    // ── Cleanup ─────────────────────────────────────────
+
+    private cleanup(): void {
+      this.phase = 'cleanup';
+
+      // Final full-canvas erase to catch any stray gradient pixels
+      const w = window.innerWidth;
+      const h = window.innerHeight;
+      this.gradientCtx.save();
+      this.gradientCtx.globalCompositeOperation = 'destination-out';
+      this.gradientCtx.fillStyle = 'rgba(0, 0, 0, 1)';
+      this.gradientCtx.fillRect(0, 0, w, h);
+      this.gradientCtx.restore();
+
+      // Fade out leaf canvas then remove everything
+      this.leafCanvas.style.transition = 'opacity 0.2s ease-out';
+      this.leafCanvas.style.opacity = '0';
+
+      this.leafCanvas.addEventListener('transitionend', () => {
+        this.gradientCanvas.remove();
+        this.leafCanvas.remove();
+        delete (window as any).__loadingReady;
+        this.phase = 'done';
+      }, { once: true });
+
+      // Fallback removal if transitionend doesn't fire
+      setTimeout(() => {
+        if (this.phase !== 'done') {
+          this.gradientCanvas.remove();
+          this.leafCanvas.remove();
+          delete (window as any).__loadingReady;
+          this.phase = 'done';
+        }
+      }, 500);
+    }
+  }
+
+  // Instantiate
+  new LoadingScreenRenderer();
+</script>

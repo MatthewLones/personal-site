@@ -1,0 +1,375 @@
+---
+---
+<div class="pendulum-layer">
+  <canvas id="double-pendulum-canvas"></canvas>
+</div>
+
+<script>
+  import {
+    stepPendulum,
+    getBobPositions,
+    solveIKBob2,
+    solveIKBob1,
+    type PendulumState,
+    type PendulumConfig,
+    type Vec2,
+  } from '../../lib/double-pendulum';
+
+  class DoublePendulumRenderer {
+    private canvas: HTMLCanvasElement;
+    private ctx: CanvasRenderingContext2D;
+    private state: PendulumState;
+    private config!: PendulumConfig;
+    private pendingRender = false;
+    private lastTime = 0;
+
+    // Pivot position (screen coords)
+    private pivotX = 0;
+    private pivotY = 15;
+
+    // Visual tokens
+    private armColor = '#3a3020';
+    private armWidth = 1.5;
+    private bobRadius = 4;
+    private bobColor = '#3a3020';
+    private bobOpacity = 0.7;
+    private pivotRadius = 2;
+
+    // Trail
+    private trailLength = 30;
+    private trailOpacity = 0.12;
+    private trail: Vec2[] = [];
+
+    // Interaction
+    private dragging: 'bob1' | 'bob2' | null = null;
+    private pointerHistory: { x: number; y: number; t: number }[] = [];
+    private cursorOverBob = false;
+
+    // Grab radius (screen px) — larger than visual bob for easy grabbing
+    private grabRadius = 20;
+
+    constructor(canvas: HTMLCanvasElement) {
+      this.canvas = canvas;
+      this.ctx = canvas.getContext('2d')!;
+
+      // Random initial state — wider angles and slight initial velocities for liveliness
+      const sign1 = Math.random() < 0.5 ? -1 : 1;
+      const sign2 = Math.random() < 0.5 ? -1 : 1;
+      this.state = {
+        theta1: sign1 * (Math.PI / 4 + Math.random() * Math.PI / 3),
+        theta2: sign2 * (Math.PI / 4 + Math.random() * Math.PI / 3),
+        omega1: (Math.random() - 0.5) * 2,
+        omega2: (Math.random() - 0.5) * 3,
+      };
+
+      this.readTokens();
+      this.computePivot();
+      this.setupCanvas();
+      this.bindEvents();
+
+      this.lastTime = performance.now();
+      this.scheduleRender();
+      window.dispatchEvent(new CustomEvent('component-ready', { detail: { id: 'double-pendulum' } }));
+    }
+
+    private readTokens() {
+      const s = getComputedStyle(document.documentElement);
+      const f = (name: string, fallback: number) => {
+        const v = parseFloat(s.getPropertyValue(name).trim());
+        return isNaN(v) ? fallback : v;
+      };
+      const str = (name: string, fallback: string) => {
+        const v = s.getPropertyValue(name).trim();
+        return v || fallback;
+      };
+
+      this.armColor = str('--dp-arm-color', '#3a3020');
+      this.armWidth = f('--dp-arm-width', 1.5);
+      this.bobRadius = f('--dp-bob-radius', 4);
+      this.bobColor = str('--dp-bob-color', '#3a3020');
+      this.bobOpacity = f('--dp-bob-opacity', 0.7);
+      this.pivotRadius = f('--dp-pivot-radius', 2);
+      this.trailLength = f('--dp-trail-length', 30);
+      this.trailOpacity = f('--dp-trail-opacity', 0.12);
+
+      this.config = {
+        length1: f('--dp-length1', 60),
+        length2: f('--dp-length2', 50),
+        mass1: f('--dp-mass1', 1),
+        mass2: f('--dp-mass2', 1),
+        gravity: f('--dp-gravity', 400),
+        damping: f('--dp-damping', 0.3),
+      };
+    }
+
+    private computePivot() {
+      const contentCard = document.querySelector('.content-card');
+      if (contentCard) {
+        const rect = contentCard.getBoundingClientRect();
+        // Halfway between header area and right edge of content card
+        this.pivotX = (rect.left + rect.right) / 2 + 40;
+      } else {
+        this.pivotX = 250;
+      }
+      this.pivotY = 0;
+    }
+
+    private setupCanvas() {
+      const dpr = window.devicePixelRatio || 1;
+      const container = this.canvas.parentElement!;
+      const w = container.clientWidth;
+      const h = container.clientHeight;
+      this.canvas.width = w * dpr;
+      this.canvas.height = h * dpr;
+      this.canvas.style.width = w + 'px';
+      this.canvas.style.height = h + 'px';
+      this.ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    }
+
+    private bindEvents() {
+      document.addEventListener('pointerdown', (e) => this.onPointerDown(e));
+      document.addEventListener('pointermove', (e) => this.onPointerMove(e));
+      document.addEventListener('pointerup', (e) => this.onPointerUp(e));
+      window.addEventListener('resize', () => this.onResize());
+    }
+
+    private onPointerDown(e: PointerEvent) {
+      const { bob1, bob2 } = getBobPositions(this.state, this.config, this.pivotX, this.pivotY);
+
+      const d2 = dist(e.clientX, e.clientY, bob2.x, bob2.y);
+      const d1 = dist(e.clientX, e.clientY, bob1.x, bob1.y);
+
+      // Prefer bob2 (tip) if both are close
+      if (d2 < this.grabRadius) {
+        this.dragging = 'bob2';
+      } else if (d1 < this.grabRadius) {
+        this.dragging = 'bob1';
+      } else {
+        return;
+      }
+
+      // Prevent browser text selection while dragging
+      e.preventDefault();
+
+      this.pointerHistory = [{ x: e.clientX, y: e.clientY, t: performance.now() }];
+      document.body.style.cursor = 'grabbing';
+      this.scheduleRender();
+    }
+
+    private onPointerMove(e: PointerEvent) {
+      if (this.dragging) {
+        // Update pendulum state via IK
+        if (this.dragging === 'bob2') {
+          const result = solveIKBob2(
+            e.clientX, e.clientY,
+            this.pivotX, this.pivotY,
+            this.config, this.state.theta1,
+          );
+          this.state.theta1 = result.theta1;
+          this.state.theta2 = result.theta2;
+        } else {
+          this.state.theta1 = solveIKBob1(
+            e.clientX, e.clientY,
+            this.pivotX, this.pivotY,
+            this.config,
+          );
+        }
+        this.state.omega1 = 0;
+        this.state.omega2 = 0;
+
+        // Track pointer for throw velocity
+        const now = performance.now();
+        this.pointerHistory.push({ x: e.clientX, y: e.clientY, t: now });
+        if (this.pointerHistory.length > 5) this.pointerHistory.shift();
+
+        this.scheduleRender();
+        return;
+      }
+
+      // Hover detection for cursor feedback
+      const { bob1, bob2 } = getBobPositions(this.state, this.config, this.pivotX, this.pivotY);
+      const d2 = dist(e.clientX, e.clientY, bob2.x, bob2.y);
+      const d1 = dist(e.clientX, e.clientY, bob1.x, bob1.y);
+      const nearBob = d2 < this.grabRadius || d1 < this.grabRadius;
+
+      if (nearBob && !this.cursorOverBob) {
+        this.cursorOverBob = true;
+        document.body.style.cursor = 'grab';
+      } else if (!nearBob && this.cursorOverBob) {
+        this.cursorOverBob = false;
+        document.body.style.cursor = '';
+      }
+    }
+
+    private onPointerUp(_e: PointerEvent) {
+      if (!this.dragging) return;
+
+      // Compute throw velocity from pointer history
+      if (this.pointerHistory.length >= 2) {
+        const recent = this.pointerHistory[this.pointerHistory.length - 1];
+        const older = this.pointerHistory[Math.max(0, this.pointerHistory.length - 3)];
+        const dt = (recent.t - older.t) / 1000;
+
+        if (dt > 0.001) {
+          const vx = (recent.x - older.x) / dt;
+          const vy = (recent.y - older.y) / dt;
+
+          // Convert screen velocity to angular velocities (scaled down for natural feel)
+          const throwScale = 0.4;
+          const { bob1, bob2 } = getBobPositions(this.state, this.config, this.pivotX, this.pivotY);
+
+          if (this.dragging === 'bob2') {
+            // Angular velocity of arm2 around bob1
+            const r2x = bob2.x - bob1.x;
+            const r2y = bob2.y - bob1.y;
+            const L2 = this.config.length2;
+            this.state.omega2 = (r2y * vx - r2x * vy) / (L2 * L2) * throwScale;
+
+            // Angular velocity of arm1 around pivot
+            const r1x = bob1.x - this.pivotX;
+            const r1y = bob1.y - this.pivotY;
+            const L1 = this.config.length1;
+            this.state.omega1 = (r1y * vx - r1x * vy) / (L1 * L1) * throwScale * 0.5;
+          } else {
+            // Dragging bob1: set omega1 from velocity
+            const r1x = bob1.x - this.pivotX;
+            const r1y = bob1.y - this.pivotY;
+            const L1 = this.config.length1;
+            this.state.omega1 = (r1y * vx - r1x * vy) / (L1 * L1) * throwScale;
+          }
+        }
+      }
+
+      this.dragging = null;
+      this.pointerHistory = [];
+      document.body.style.cursor = this.cursorOverBob ? 'grab' : '';
+      this.lastTime = performance.now();
+      this.scheduleRender();
+    }
+
+    private onResize() {
+      this.computePivot();
+      this.setupCanvas();
+      this.scheduleRender();
+    }
+
+    private scheduleRender() {
+      if (this.pendingRender) return;
+      this.pendingRender = true;
+      requestAnimationFrame((now) => {
+        this.pendingRender = false;
+        const dt = Math.min(0.05, (now - this.lastTime) / 1000);
+        this.lastTime = now;
+
+        // Step physics (skip while dragging)
+        if (!this.dragging && dt > 0) {
+          this.state = stepPendulum(this.state, dt, this.config);
+        }
+
+        // Update trail
+        const { bob2 } = getBobPositions(this.state, this.config, this.pivotX, this.pivotY);
+        this.trail.push({ x: bob2.x, y: bob2.y });
+        if (this.trail.length > this.trailLength) {
+          this.trail.shift();
+        }
+
+        this.render();
+
+        // Always keep animating (pendulum is continuous)
+        this.scheduleRender();
+      });
+    }
+
+    private render() {
+      const ctx = this.ctx;
+      const container = this.canvas.parentElement!;
+      const w = container.clientWidth;
+      const h = container.clientHeight;
+      ctx.clearRect(0, 0, w, h);
+
+      const { bob1, bob2 } = getBobPositions(this.state, this.config, this.pivotX, this.pivotY);
+
+      // 1. Draw trail
+      if (this.trail.length > 1) {
+        ctx.save();
+        ctx.lineCap = 'round';
+        ctx.lineJoin = 'round';
+        ctx.lineWidth = 1;
+        for (let i = 1; i < this.trail.length; i++) {
+          const alpha = (i / this.trail.length) * this.trailOpacity;
+          ctx.strokeStyle = `rgba(58, 48, 32, ${alpha})`;
+          ctx.beginPath();
+          ctx.moveTo(this.trail[i - 1].x, this.trail[i - 1].y);
+          ctx.lineTo(this.trail[i].x, this.trail[i].y);
+          ctx.stroke();
+        }
+        ctx.restore();
+      }
+
+      // 2. Draw arms
+      ctx.save();
+      ctx.strokeStyle = this.armColor;
+      ctx.lineWidth = this.armWidth;
+      ctx.lineCap = 'round';
+
+      ctx.beginPath();
+      ctx.moveTo(this.pivotX, this.pivotY);
+      ctx.lineTo(bob1.x, bob1.y);
+      ctx.stroke();
+
+      ctx.beginPath();
+      ctx.moveTo(bob1.x, bob1.y);
+      ctx.lineTo(bob2.x, bob2.y);
+      ctx.stroke();
+      ctx.restore();
+
+      // 3. Draw pivot
+      ctx.beginPath();
+      ctx.arc(this.pivotX, this.pivotY, this.pivotRadius, 0, Math.PI * 2);
+      ctx.fillStyle = this.armColor;
+      ctx.fill();
+
+      // 4. Draw bobs
+      ctx.globalAlpha = this.bobOpacity;
+      ctx.fillStyle = this.bobColor;
+
+      ctx.beginPath();
+      ctx.arc(bob1.x, bob1.y, this.pivotRadius, 0, Math.PI * 2);
+      ctx.fill();
+
+      ctx.beginPath();
+      ctx.arc(bob2.x, bob2.y, this.bobRadius, 0, Math.PI * 2);
+      ctx.fill();
+
+      ctx.globalAlpha = 1;
+    }
+  }
+
+  function dist(x1: number, y1: number, x2: number, y2: number): number {
+    const dx = x1 - x2;
+    const dy = y1 - y2;
+    return Math.sqrt(dx * dx + dy * dy);
+  }
+
+  const canvas = document.getElementById('double-pendulum-canvas') as HTMLCanvasElement;
+  if (canvas) {
+    new DoublePendulumRenderer(canvas);
+  }
+</script>
+
+<style>
+  .pendulum-layer {
+    position: absolute;
+    inset: 0;
+    z-index: 3;
+    pointer-events: none;
+    overflow: hidden;
+  }
+
+  .pendulum-layer canvas {
+    position: absolute;
+    inset: 0;
+    width: 100%;
+    height: 100%;
+  }
+</style>

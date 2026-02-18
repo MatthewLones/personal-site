@@ -1,5 +1,6 @@
 ---
 import GrainOverlay from '../components/layout/GrainOverlay.astro';
+import LoadingScreen from '../components/interactive/LoadingScreen.astro';
 import '../styles/global.css';
 import '../styles/layout.css';
 
@@ -19,6 +20,9 @@ const { title = 'Matthew Lones' } = Astro.props;
   <title>{title}</title>
 </head>
 <body>
+  <!-- Loading screen overlay (first for instant coverage) -->
+  <LoadingScreen />
+
   <!-- Full-page monotile tiling background -->
   <slot name="tiling-bg" />
 
@@ -27,6 +31,8 @@ const { title = 'Matthew Lones' } = Astro.props;
 
   <!-- Layer 2: Content grid on top -->
   <div class="page-grid">
+    <slot name="galton" />
+    <slot name="pendulum" />
     <aside class="margin-left">
       <slot name="margin-left" />
     </aside>

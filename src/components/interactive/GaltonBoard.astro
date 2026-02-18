@@ -1,0 +1,658 @@
+---
+---
+<div class="galton-layer">
+  <canvas id="galton-board-canvas"></canvas>
+</div>
+
+<script>
+  import {
+    generatePegs,
+    computePath,
+    stepArc,
+    computeExitVelocity,
+    stepPhysics,
+    resolveCollision,
+    resolveKinematicCollision,
+    isAtRest,
+    type GaltonConfig,
+    type GaltonParticle,
+    type Peg,
+  } from '../../lib/galton-board';
+
+  function hexToRgb(hex: string): [number, number, number] {
+    hex = hex.replace('#', '');
+    return [
+      parseInt(hex.substring(0, 2), 16),
+      parseInt(hex.substring(2, 4), 16),
+      parseInt(hex.substring(4, 6), 16),
+    ];
+  }
+
+  class GaltonBoardRenderer {
+    private canvas: HTMLCanvasElement;
+    private ctx: CanvasRenderingContext2D;
+    private pegs: Peg[] = [];
+    private config!: GaltonConfig;
+    private particles: GaltonParticle[] = [];
+    private pendingRender = false;
+    private lastTime = 0;
+
+    // Settled particle buffer
+    private settledCanvas: OffscreenCanvas | null = null;
+    private settledCtx: OffscreenCanvasRenderingContext2D | null = null;
+    private settledParticles: { x: number; y: number; shade: [number, number, number] }[] = [];
+
+    // Visual tokens
+    private pegRadius = 1.5;
+    private pegColor = '#2a3020';
+    private pegOpacity = 0.12;
+    private particleRadius = 2.5;
+    private particleColor: [number, number, number] = [58, 48, 32];
+    private particleOpacity = 0.6;
+    private boardTopMargin = 3;
+
+    // Physics tokens
+    private gravity = 800;
+    private damping = 2.0;
+    private restitution = 0.3;
+    private restThreshold = 5;
+    private restFrames = 10;
+    private substeps = 3;
+    private collisionIters = 2;
+
+    // Rope sweep state
+    private sweepThreshold = 100;
+    private ropeLiftSpeed = 300;
+    private ropeDeployDuration = 0.4;
+    private ropePhase: 'idle' | 'deploy' | 'lift' = 'idle';
+    private ropeDeployProgress = 0;
+    private ropeSagY = 0;
+    private ropeAnchorY = -30;
+    private ropeLeftX = -20;
+    private ropeRightX = 0;
+    private ropeColliderRadius = 3;
+    private ropeColliderSpacing = 6;
+
+    constructor(canvas: HTMLCanvasElement) {
+      this.canvas = canvas;
+      this.ctx = canvas.getContext('2d')!;
+
+      this.readTokens();
+      this.computeConfig();
+      this.pegs = generatePegs(this.config);
+      this.setupCanvas();
+      this.initSettledBuffer();
+
+      document.addEventListener('tile-click', () => this.spawnParticle());
+      window.addEventListener('resize', () => this.onResize());
+
+      // Initial render to show pegs
+      this.scheduleRender();
+      window.dispatchEvent(new CustomEvent('component-ready', { detail: { id: 'galton-board' } }));
+    }
+
+    private readTokens() {
+      const s = getComputedStyle(document.documentElement);
+      const f = (name: string, fallback: number) => {
+        const v = parseFloat(s.getPropertyValue(name).trim());
+        return isNaN(v) ? fallback : v;
+      };
+      const str = (name: string, fallback: string) => {
+        const v = s.getPropertyValue(name).trim();
+        return v || fallback;
+      };
+
+      this.pegRadius = f('--galton-peg-radius', 1.5);
+      this.pegColor = str('--galton-peg-color', '#2a3020');
+      this.pegOpacity = f('--galton-peg-opacity', 0.12);
+      this.particleRadius = f('--galton-particle-radius', 2.5);
+      this.particleOpacity = f('--galton-particle-opacity', 0.6);
+      this.boardTopMargin = f('--galton-board-top-margin', 3);
+      this.gravity = f('--galton-gravity', 800);
+      this.damping = f('--galton-damping', 2.0);
+      this.restitution = f('--galton-restitution', 0.3);
+      this.restThreshold = f('--galton-rest-threshold', 5);
+      this.restFrames = f('--galton-rest-frames', 10);
+      this.substeps = f('--galton-substeps', 3);
+      this.collisionIters = f('--galton-collision-iters', 2);
+      this.sweepThreshold = f('--galton-sweep-threshold', 100);
+      this.ropeLiftSpeed = f('--galton-rope-lift-speed', 300);
+      this.ropeDeployDuration = f('--galton-rope-deploy-time', 0.4);
+
+      const colorHex = str('--galton-particle-color', '#3a3020');
+      this.particleColor = hexToRgb(colorHex);
+    }
+
+    private computeConfig() {
+      const s = getComputedStyle(document.documentElement);
+      const f = (name: string, fallback: number) => {
+        const v = parseFloat(s.getPropertyValue(name).trim());
+        return isNaN(v) ? fallback : v;
+      };
+
+      const numRows = f('--galton-num-rows', 10);
+      const pegSpacingX = f('--galton-peg-spacing-x', 16);
+      const pegSpacingY = f('--galton-peg-spacing-y', 20);
+      const arcDuration = f('--galton-arc-duration', 0.12);
+      const arcHeight = f('--galton-arc-height', 8);
+
+      // Center at viewport horizontal center
+      let centerX = window.innerWidth / 2;
+
+      // Safety check: don't overlap content text on narrow screens
+      const contentCard = document.querySelector('.content-card');
+      if (contentCard) {
+        const rect = contentCard.getBoundingClientRect();
+        const textRight = rect.left + rect.width * 0.6;
+        const boardHalfWidth = (numRows / 2) * pegSpacingX;
+        const boardLeft = centerX - boardHalfWidth;
+        if (boardLeft < textRight + 20) {
+          centerX = textRight + 20 + boardHalfWidth;
+        }
+      }
+
+      const boardTopY = this.boardTopMargin;
+      const spawnY = boardTopY + (numRows + 1) * pegSpacingY;
+
+      this.config = {
+        numRows,
+        pegSpacingX,
+        pegSpacingY,
+        centerX,
+        boardTopY,
+        spawnY,
+        arcDuration,
+        arcHeight,
+        particleRadius: this.particleRadius,
+        gravity: this.gravity,
+        damping: this.damping,
+        restitution: this.restitution,
+        restThreshold: this.restThreshold,
+        restFrames: this.restFrames,
+        substeps: this.substeps,
+        collisionIters: this.collisionIters,
+      };
+    }
+
+    private setupCanvas() {
+      const dpr = window.devicePixelRatio || 1;
+      const container = this.canvas.parentElement!;
+      const w = container.clientWidth;
+      const h = container.clientHeight;
+      this.canvas.width = w * dpr;
+      this.canvas.height = h * dpr;
+      this.canvas.style.width = w + 'px';
+      this.canvas.style.height = h + 'px';
+      this.ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    }
+
+    private initSettledBuffer() {
+      const w = this.canvas.width;
+      const h = this.canvas.height;
+      this.settledCanvas = new OffscreenCanvas(w, h);
+      this.settledCtx = this.settledCanvas.getContext('2d')!;
+      const dpr = window.devicePixelRatio || 1;
+      this.settledCtx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    }
+
+    /**
+     * Compute rope Y at parameter t in [0, 1].
+     * t=0 -> left anchor, t=0.5 -> center (sag), t=1 -> right anchor.
+     * Shape is a parabola passing through both anchors and the sag point.
+     */
+    private ropeYAt(t: number): number {
+      const sagFactor = 4 * t * (1 - t);
+      return this.ropeAnchorY + (this.ropeSagY - this.ropeAnchorY) * sagFactor;
+    }
+
+    /**
+     * Build the rope collider chain for the current frame.
+     * Returns an array of collider positions with their upward velocities.
+     */
+    private computeRopeColliders(): { x: number; y: number; vy: number }[] {
+      const colliders: { x: number; y: number; vy: number }[] = [];
+      const width = this.ropeRightX - this.ropeLeftX;
+      const numPoints = Math.ceil(width / this.ropeColliderSpacing);
+
+      for (let i = 0; i <= numPoints; i++) {
+        const t = i / numPoints;
+        const x = this.ropeLeftX + t * width;
+        const sagFactor = 4 * t * (1 - t);
+        const y = this.ropeAnchorY + (this.ropeSagY - this.ropeAnchorY) * sagFactor;
+        // Velocity proportional to sag: center moves fastest, edges are anchored
+        const vy = -this.ropeLiftSpeed * sagFactor;
+        colliders.push({ x, y, vy });
+      }
+
+      return colliders;
+    }
+
+    private startSweep() {
+      this.ropePhase = 'deploy';
+      this.ropeDeployProgress = 0;
+
+      // Find the lowest settled particle Y (largest Y = lowest on screen)
+      let maxSettledY = 0;
+      for (const sp of this.settledParticles) {
+        if (sp.y > maxSettledY) maxSettledY = sp.y;
+      }
+
+      // Sag below pile; anchors at top of screen for dramatic curve
+      this.ropeSagY = maxSettledY + 40;
+      this.ropeAnchorY = -30;
+
+      // Anchor rope just outside the pile (~20px margin from widest peg row)
+      const boardHalfWidth = (this.config.numRows / 2) * this.config.pegSpacingX;
+      this.ropeLeftX = this.config.centerX - boardHalfWidth - 20;
+      this.ropeRightX = this.config.centerX + boardHalfWidth + 20;
+    }
+
+    private endSweep() {
+      this.ropePhase = 'idle';
+
+      // Remove any remaining physics particles (keep arc particles)
+      for (let i = this.particles.length - 1; i >= 0; i--) {
+        if (this.particles[i].phase === 'physics') {
+          this.particles.splice(i, 1);
+        }
+      }
+    }
+
+    private clearSettledBuffer() {
+      if (this.settledCtx && this.settledCanvas) {
+        const dpr = window.devicePixelRatio || 1;
+        this.settledCanvas.width = this.canvas.width;
+        this.settledCanvas.height = this.canvas.height;
+        this.settledCtx.setTransform(dpr, 0, 0, dpr, 0, 0);
+      }
+    }
+
+    private spawnParticle() {
+      const path = computePath(this.config);
+      const spawn = path.waypoints[0];
+      const particle: GaltonParticle = {
+        path,
+        segmentIndex: 0,
+        segmentProgress: 0,
+        pos: { x: spawn.x, y: spawn.y },
+        active: true,
+        phase: 'arc',
+        vx: 0,
+        vy: 0,
+        restCounter: 0,
+      };
+      this.particles.push(particle);
+      this.lastTime = performance.now();
+      this.scheduleRender();
+    }
+
+    private onResize() {
+      const oldCenterX = this.config.centerX;
+      const oldBoardTopY = this.config.boardTopY;
+
+      this.computeConfig();
+      this.pegs = generatePegs(this.config);
+      this.setupCanvas();
+      this.initSettledBuffer();
+
+      const dx = this.config.centerX - oldCenterX;
+      const dy = this.config.boardTopY - oldBoardTopY;
+
+      for (const sp of this.settledParticles) {
+        sp.x += dx;
+        sp.y += dy;
+      }
+      for (const p of this.particles) {
+        if (p.active) {
+          p.pos.x += dx;
+          p.pos.y += dy;
+        }
+      }
+
+      this.redrawSettledBuffer();
+      this.scheduleRender();
+    }
+
+    private redrawSettledBuffer() {
+      if (!this.settledCtx || !this.settledCanvas) return;
+      const dpr = window.devicePixelRatio || 1;
+      this.settledCanvas.width = this.canvas.width;
+      this.settledCanvas.height = this.canvas.height;
+      this.settledCtx.setTransform(dpr, 0, 0, dpr, 0, 0);
+
+      for (const sp of this.settledParticles) {
+        this.settledCtx.beginPath();
+        this.settledCtx.arc(sp.x, sp.y, this.particleRadius, 0, Math.PI * 2);
+        this.settledCtx.fillStyle = `rgba(${sp.shade[0]}, ${sp.shade[1]}, ${sp.shade[2]}, ${this.particleOpacity})`;
+        this.settledCtx.fill();
+      }
+    }
+
+    private promoteToSettled(particle: GaltonParticle) {
+      const shade: [number, number, number] = [
+        Math.max(0, Math.min(255, this.particleColor[0] + Math.floor(Math.random() * 31) - 15)),
+        Math.max(0, Math.min(255, this.particleColor[1] + Math.floor(Math.random() * 31) - 15)),
+        Math.max(0, Math.min(255, this.particleColor[2] + Math.floor(Math.random() * 31) - 15)),
+      ];
+
+      this.settledParticles.push({ x: particle.pos.x, y: particle.pos.y, shade });
+
+      if (this.settledCtx) {
+        this.settledCtx.beginPath();
+        this.settledCtx.arc(particle.pos.x, particle.pos.y, this.particleRadius, 0, Math.PI * 2);
+        this.settledCtx.fillStyle = `rgba(${shade[0]}, ${shade[1]}, ${shade[2]}, ${this.particleOpacity})`;
+        this.settledCtx.fill();
+      }
+    }
+
+    private isOffScreen(p: GaltonParticle): boolean {
+      const margin = 100;
+      const w = this.canvas.parentElement!.clientWidth;
+      const h = this.canvas.parentElement!.clientHeight;
+      return p.pos.x < -margin || p.pos.x > w + margin ||
+             p.pos.y < -margin || p.pos.y > h + margin;
+    }
+
+    private scheduleRender() {
+      if (this.pendingRender) return;
+      this.pendingRender = true;
+      requestAnimationFrame((now) => {
+        this.pendingRender = false;
+        const dt = Math.min(0.05, (now - this.lastTime) / 1000);
+        this.lastTime = now;
+
+        let anyActive = false;
+        const isLifting = this.ropePhase === 'lift';
+
+        // Phase 1: Step arc particles
+        for (const p of this.particles) {
+          if (!p.active || p.phase !== 'arc') continue;
+          anyActive = true;
+          const result = stepArc(p, dt, this.config);
+          if (result === 'done') {
+            p.phase = 'physics';
+            const exitVel = computeExitVelocity(p, this.config);
+            p.vx = exitVel.x;
+            p.vy = exitVel.y;
+          }
+        }
+
+        // Phase 2: Rope animation
+        if (this.ropePhase === 'deploy') {
+          anyActive = true;
+          this.ropeDeployProgress += dt / this.ropeDeployDuration;
+
+          if (this.ropeDeployProgress >= 1) {
+            this.ropeDeployProgress = 1;
+            this.ropePhase = 'lift';
+
+            // Re-activate all settled particles as physics
+            for (const sp of this.settledParticles) {
+              this.particles.push({
+                path: { waypoints: [], binIndex: 0 },
+                segmentIndex: 0,
+                segmentProgress: 0,
+                pos: { x: sp.x, y: sp.y },
+                active: true,
+                phase: 'physics',
+                vx: 0,
+                vy: 0,
+                restCounter: 0,
+              });
+            }
+            this.settledParticles = [];
+            this.clearSettledBuffer();
+          }
+        } else if (this.ropePhase === 'lift') {
+          anyActive = true;
+          this.ropeSagY -= this.ropeLiftSpeed * dt;
+
+          // Rope is fully above screen when sag reaches anchor level
+          if (this.ropeSagY < this.ropeAnchorY + 5) {
+            this.endSweep();
+          }
+        }
+
+        // Phase 3: Physics sub-stepping
+        const physicsParticles: GaltonParticle[] = [];
+        for (const p of this.particles) {
+          if (p.active && p.phase === 'physics') {
+            physicsParticles.push(p);
+          }
+        }
+
+        if (physicsParticles.length > 0) {
+          anyActive = true;
+          const subDt = dt / this.config.substeps;
+
+          // During lift: disable ceiling by temporarily moving it far up
+          const savedBoardTopY = this.config.boardTopY;
+          if (isLifting) this.config.boardTopY = -10000;
+
+          // Pre-compute rope colliders for lift phase
+          const ropeColliders = isLifting ? this.computeRopeColliders() : [];
+
+          for (let step = 0; step < this.config.substeps; step++) {
+            // Integrate physics
+            for (const p of physicsParticles) {
+              stepPhysics(p, subDt, this.config);
+            }
+
+            // Collision resolution
+            for (let iter = 0; iter < this.config.collisionIters; iter++) {
+              for (const p of physicsParticles) {
+                // vs settled particles (B is static)
+                for (const sp of this.settledParticles) {
+                  const result = resolveCollision(
+                    p.pos.x, p.pos.y, p.vx, p.vy,
+                    sp.x, sp.y,
+                    this.config.particleRadius,
+                    this.config.restitution,
+                  );
+                  if (result) {
+                    p.pos.x = result.x;
+                    p.pos.y = result.y;
+                    p.vx = result.vx;
+                    p.vy = result.vy;
+                  }
+                }
+
+                // vs other active physics particles
+                for (const other of physicsParticles) {
+                  if (other === p) continue;
+                  const result = resolveCollision(
+                    p.pos.x, p.pos.y, p.vx, p.vy,
+                    other.pos.x, other.pos.y,
+                    this.config.particleRadius,
+                    this.config.restitution,
+                  );
+                  if (result) {
+                    const sepX = result.x - p.pos.x;
+                    const sepY = result.y - p.pos.y;
+                    p.pos.x += sepX * 0.5;
+                    p.pos.y += sepY * 0.5;
+                    other.pos.x -= sepX * 0.5;
+                    other.pos.y -= sepY * 0.5;
+                    p.vx = result.vx;
+                    p.vy = result.vy;
+                  }
+                }
+
+                // vs rope colliders (during lift)
+                if (isLifting) {
+                  for (const rc of ropeColliders) {
+                    const result = resolveKinematicCollision(
+                      p.pos.x, p.pos.y, p.vx, p.vy,
+                      rc.x, rc.y, 0, rc.vy,
+                      this.config.particleRadius,
+                      this.ropeColliderRadius,
+                      this.config.restitution,
+                    );
+                    if (result) {
+                      p.pos.x = result.x;
+                      p.pos.y = result.y;
+                      p.vx = result.vx;
+                      p.vy = result.vy;
+                    }
+                  }
+                }
+
+                // Hard floor: rope acts as continuous rising barrier
+                if (isLifting) {
+                  const ropeWidth = this.ropeRightX - this.ropeLeftX;
+                  const t = (p.pos.x - this.ropeLeftX) / ropeWidth;
+                  if (t >= 0 && t <= 1) {
+                    const ropeY = this.ropeYAt(t);
+                    const floorY = ropeY - this.ropeColliderRadius - this.config.particleRadius;
+                    if (p.pos.y > floorY) {
+                      p.pos.y = floorY;
+                      if (p.vy > 0) {
+                        p.vy = -p.vy * this.config.restitution;
+                      }
+                    }
+                  }
+                }
+
+                // Re-enforce ceiling after collision pushes
+                // (during lift, config.boardTopY is -10000, so this is effectively disabled)
+                const minY = this.config.boardTopY + this.config.particleRadius;
+                if (p.pos.y < minY) {
+                  p.pos.y = minY;
+                  if (p.vy < 0) p.vy = -p.vy * this.config.restitution;
+                }
+              }
+            }
+          }
+
+          // Restore ceiling
+          this.config.boardTopY = savedBoardTopY;
+
+          // Phase 4: Rest detection (only when idle - no sweep active)
+          if (this.ropePhase === 'idle') {
+            for (const p of physicsParticles) {
+              if (isAtRest(p, this.config.restThreshold)) {
+                p.restCounter++;
+              } else {
+                p.restCounter = 0;
+              }
+
+              if (p.restCounter >= this.config.restFrames) {
+                p.vx = 0;
+                p.vy = 0;
+                p.active = false;
+                this.promoteToSettled(p);
+              }
+            }
+          }
+        }
+
+        // Remove inactive or off-screen particles
+        for (let i = this.particles.length - 1; i >= 0; i--) {
+          const p = this.particles[i];
+          if (!p.active || (p.phase === 'physics' && this.isOffScreen(p))) {
+            this.particles.splice(i, 1);
+          }
+        }
+
+        // Check sweep trigger
+        if (this.ropePhase === 'idle' && this.settledParticles.length >= this.sweepThreshold) {
+          this.startSweep();
+        }
+
+        this.render();
+
+        if (anyActive || this.ropePhase !== 'idle') {
+          this.scheduleRender();
+        }
+      });
+    }
+
+    private render() {
+      const ctx = this.ctx;
+      const container = this.canvas.parentElement!;
+      const w = container.clientWidth;
+      const h = container.clientHeight;
+      ctx.clearRect(0, 0, w, h);
+
+      // 1. Draw pegs
+      ctx.fillStyle = this.pegColor;
+      ctx.globalAlpha = this.pegOpacity;
+      for (const peg of this.pegs) {
+        ctx.beginPath();
+        ctx.arc(peg.pos.x, peg.pos.y, this.pegRadius, 0, Math.PI * 2);
+        ctx.fill();
+      }
+      ctx.globalAlpha = 1;
+
+      // 2. Draw settled buffer
+      if (this.settledCanvas) {
+        ctx.save();
+        ctx.setTransform(1, 0, 0, 1, 0, 0);
+        ctx.drawImage(this.settledCanvas, 0, 0);
+        ctx.restore();
+      }
+
+      // 3. Draw active particles
+      for (const p of this.particles) {
+        ctx.beginPath();
+        ctx.arc(p.pos.x, p.pos.y, this.particleRadius, 0, Math.PI * 2);
+        ctx.fillStyle = `rgba(${this.particleColor[0]}, ${this.particleColor[1]}, ${this.particleColor[2]}, ${this.particleOpacity})`;
+        ctx.fill();
+      }
+
+      // 4. Draw rope
+      if (this.ropePhase !== 'idle') {
+        this.drawRope(ctx);
+      }
+    }
+
+    private drawRope(ctx: CanvasRenderingContext2D) {
+      ctx.save();
+      ctx.strokeStyle = `rgba(${this.particleColor[0]}, ${this.particleColor[1]}, ${this.particleColor[2]}, 0.4)`;
+      ctx.lineWidth = 2;
+      ctx.lineCap = 'round';
+
+      const numSegments = 80;
+      const maxT = this.ropePhase === 'deploy' ? this.ropeDeployProgress : 1;
+      const maxI = Math.floor(numSegments * maxT);
+
+      if (maxI < 1) {
+        ctx.restore();
+        return;
+      }
+
+      ctx.beginPath();
+      for (let i = 0; i <= maxI; i++) {
+        const t = i / numSegments;
+        const x = this.ropeLeftX + t * (this.ropeRightX - this.ropeLeftX);
+        const y = this.ropeYAt(t);
+        if (i === 0) ctx.moveTo(x, y);
+        else ctx.lineTo(x, y);
+      }
+      ctx.stroke();
+      ctx.restore();
+    }
+  }
+
+  const canvas = document.getElementById('galton-board-canvas') as HTMLCanvasElement;
+  if (canvas) {
+    new GaltonBoardRenderer(canvas);
+  }
+</script>
+
+<style>
+  .galton-layer {
+    position: absolute;
+    inset: 0;
+    z-index: 3;
+    pointer-events: none;
+    overflow: hidden;
+  }
+
+  .galton-layer canvas {
+    position: absolute;
+    inset: 0;
+    width: 100%;
+    height: 100%;
+  }
+</style>

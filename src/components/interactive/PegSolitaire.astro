@@ -1,0 +1,1070 @@
+---
+/**
+ * Peg Solitaire — English Board (33 holes)
+ * Classic cross-shaped board from Louis XIV's court (1697).
+ * Jump pegs to remove them. Goal: one peg remaining.
+ * Group theory + Conway's golden-ratio pagoda function.
+ */
+---
+
+<div class="peg-container">
+  <canvas id="peg-canvas" class="peg-canvas" tabindex="0"></canvas>
+  <div class="peg-controls">
+    <div class="peg-mode-bar">
+      <button class="peg-btn" id="peg-undo">undo</button>
+      <button class="peg-btn" id="peg-reset">reset</button>
+      <button class="peg-btn" id="peg-help">?</button>
+    </div>
+    <span class="peg-move-counter" id="peg-moves">moves: 0 · pegs: 32</span>
+  </div>
+
+  <dialog id="peg-overlay" class="peg-overlay">
+    <div class="peg-overlay-inner">
+      <button class="peg-overlay-close" id="peg-overlay-close" aria-label="Close">&times;</button>
+
+      <h2 class="peg-overlay-title">Peg Solitaire</h2>
+
+      <p>
+        The game first appears at the court of <strong>Louis XIV</strong> around
+        1697 — a German engraving from that era depicts a princess playing alone
+        on the cross-shaped board. The English variant uses 33 holes in a plus
+        shape. Start with 32 pegs (center empty), jump pegs over each other to
+        remove them, and try to finish with a single peg — ideally back in the
+        center.
+      </p>
+
+      <h3>Position Classes</h3>
+      <p>
+        Label each cell with the pair (row&nbsp;mod&nbsp;3, col&nbsp;mod&nbsp;3).
+        Every legal jump — moving a peg two cells in a cardinal direction —
+        has a predictable effect on the counts of pegs in each class. Some
+        quantities are <strong>invariants</strong>: they never change regardless
+        of how you play.
+      </p>
+      <p>
+        From the standard starting position, these invariants constrain the
+        final peg to exactly <strong>5 possible cells</strong> out of 33.
+        The center is one of them — which is why "finish in the center" is the
+        classic challenge.
+      </p>
+
+      <h3>Conway's Soldiers &amp; The Pagoda Function</h3>
+      <p>
+        John Conway posed a beautiful variant: fill every cell below a
+        horizontal line with pegs. How far above the line can you advance a
+        single peg?
+      </p>
+      <p>
+        The answer is <strong>exactly 4 rows</strong> — never 5. The proof
+        uses a weighting scheme Conway called the <strong>pagoda function</strong>,
+        built from the <strong>golden ratio</strong>
+        &phi;&nbsp;=&nbsp;(1+&radic;5)/2.
+      </p>
+      <p>
+        Assign each cell a weight &phi;<sup>&minus;d</sup>, where
+        <em>d</em> is its distance from the target row. The magic of &phi;:
+        since &phi;&sup2;&nbsp;=&nbsp;&phi;&nbsp;+&nbsp;1, every legal jump
+        either <strong>preserves or decreases</strong> the total weight. The
+        starting configuration's total weight is finite — and reaching row 5
+        would require more weight than you began with. The golden ratio is the
+        unique constant that makes this argument work.
+      </p>
+
+      <p>
+        Try it yourself — advance a peg as high as you can. The pagoda value
+        tracks your budget. You need &ge;&nbsp;1.00 to reach the top row, but
+        you start with less.
+      </p>
+
+      <div class="peg-section-interactive">
+        <canvas id="peg-soldiers-canvas" class="peg-soldiers-canvas"></canvas>
+        <div class="peg-section-controls">
+          <div class="peg-mode-bar">
+            <button class="peg-btn" id="peg-soldiers-undo">undo</button>
+            <button class="peg-btn" id="peg-soldiers-reset">reset</button>
+          </div>
+          <span class="peg-soldiers-value" id="peg-soldiers-value"></span>
+        </div>
+      </div>
+    </div>
+  </dialog>
+</div>
+
+<style>
+  .peg-container {
+    position: relative;
+    width: fit-content;
+  }
+
+  .peg-canvas {
+    display: block;
+    outline: none;
+  }
+
+  .peg-controls {
+    display: flex;
+    align-items: center;
+    gap: 0.75rem;
+    margin-top: 0.5rem;
+    opacity: var(--peg-controls-opacity, 0.3);
+    transition: opacity 0.3s;
+  }
+
+  .peg-controls:hover,
+  .peg-controls:focus-within {
+    opacity: var(--peg-controls-hover-opacity, 0.7);
+  }
+
+  .peg-mode-bar {
+    display: flex;
+    gap: 1px;
+    border: 1px solid var(--peg-border-color, #3a3020);
+    border-radius: 4px;
+    overflow: hidden;
+  }
+
+  .peg-btn {
+    font-family: var(--font-mono);
+    font-size: 0.6rem;
+    color: var(--peg-border-color, #3a3020);
+    background: transparent;
+    border: none;
+    border-right: 1px solid var(--peg-border-color, #3a3020);
+    padding: 3px 8px;
+    cursor: pointer;
+    line-height: 1;
+    transition: background 0.15s, color 0.15s;
+  }
+
+  .peg-btn:last-child {
+    border-right: none;
+  }
+
+  .peg-btn:hover {
+    background: var(--peg-border-color, #3a3020);
+    color: var(--color-bg-light, #BCC6AF);
+  }
+
+  .peg-move-counter {
+    font-family: var(--font-mono);
+    font-size: 0.55rem;
+    color: var(--peg-border-color, #3a3020);
+    line-height: 1;
+  }
+
+  /* ─── Overlay ───────────────────────────────── */
+
+  .peg-overlay {
+    border: none;
+    border-radius: 16px;
+    background: var(--peg-overlay-bg, #adb99f);
+    color: var(--color-text-primary, #252525);
+    max-width: var(--peg-overlay-max-width, 760px);
+    width: calc(100% - 3rem);
+    height: calc(100vh - 3rem);
+    margin: auto;
+    padding: 0;
+    overflow: hidden;
+    box-shadow: 0 12px 48px rgba(0, 0, 0, 0.3);
+  }
+
+  .peg-overlay::backdrop {
+    background: rgba(0, 0, 0, 0.35);
+    backdrop-filter: blur(4px);
+  }
+
+  .peg-overlay-inner {
+    padding: 2.5rem 3rem 3rem;
+    overflow-y: auto;
+    height: 100%;
+    box-sizing: border-box;
+    scrollbar-width: none;
+    -ms-overflow-style: none;
+  }
+
+  .peg-overlay-inner::-webkit-scrollbar {
+    display: none;
+  }
+
+  .peg-overlay-close {
+    position: absolute;
+    top: 1rem;
+    right: 1.25rem;
+    background: none;
+    border: none;
+    color: var(--color-text-primary, #252525);
+    font-size: 1.5rem;
+    cursor: pointer;
+    opacity: 0.35;
+    transition: opacity 0.2s;
+    line-height: 1;
+  }
+
+  .peg-overlay-close:hover {
+    opacity: 0.8;
+  }
+
+  .peg-overlay-title {
+    font-family: var(--font-heading, serif);
+    font-size: 1.6rem;
+    font-weight: 700;
+    margin: 0 0 1.25rem;
+    color: var(--color-text-primary, #252525);
+  }
+
+  .peg-overlay-inner > p {
+    font-family: var(--font-body, serif);
+    font-size: 0.9rem;
+    line-height: 1.75;
+    margin: 0 0 0.9rem;
+    color: var(--color-text-primary, #252525);
+  }
+
+  .peg-overlay-inner > h3 {
+    font-family: var(--font-heading, serif);
+    font-size: 1.1rem;
+    font-weight: 700;
+    color: var(--color-text-primary, #252525);
+    margin: 2rem 0 0.6rem;
+  }
+
+  /* ─── Interactive sections (Conway's Soldiers) ──────────── */
+
+  .peg-section-interactive {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    margin: 1rem 0 0.5rem;
+    padding: 1rem;
+    background: rgba(255, 255, 255, 0.08);
+    border-radius: 12px;
+  }
+
+  .peg-section-controls {
+    display: flex;
+    align-items: center;
+    gap: 0.75rem;
+    margin-top: 0.5rem;
+  }
+
+  .peg-soldiers-canvas {
+    display: block;
+    cursor: pointer;
+  }
+
+  .peg-soldiers-value {
+    font-family: var(--font-mono);
+    font-size: 0.55rem;
+    color: var(--peg-border-color, #3a3020);
+    line-height: 1;
+  }
+
+  @media (max-width: 500px) {
+    .peg-overlay {
+      width: calc(100% - 1.5rem);
+      height: calc(100vh - 1.5rem);
+      border-radius: 12px;
+    }
+
+    .peg-overlay-inner {
+      padding: 1.5rem 1.25rem 2rem;
+    }
+  }
+</style>
+
+<script>
+  import {
+    type PegState,
+    type PegMove,
+    type Pos,
+    type SoldiersState,
+    BOARD_SIZE,
+    CENTER,
+    VALID_CELLS,
+    createState,
+    getMovesForPeg,
+    getValidMoves,
+    makeMove,
+    undoMove,
+    canUndo,
+    resetPuzzle,
+    isStuck,
+    hitTestCell,
+    createSoldiersState,
+    getSoldiersMovesForPeg,
+    getSoldiersValidMoves,
+    makeSoldiersMove,
+    undoSoldiersMove,
+    boardPagodaTotal,
+    cellWeight,
+    hitTestSoldiersCell,
+  } from '../../lib/peg-solitaire';
+  import {
+    type ConfettiParticle,
+    spawnConfetti,
+    stepConfetti,
+  } from '../../lib/lights-out';
+
+  interface Tokens {
+    cellSize: number;
+    holeColor: string;
+    holeOpacity: number;
+    pegColor: string;
+    pegRadius: number;
+    selectedColor: string;
+    selectedGlow: string;
+    targetColor: string;
+    targetOpacity: number;
+    confettiCount: number;
+    confettiGravity: number;
+    confettiSpread: number;
+  }
+
+  class PegRenderer {
+    private canvas: HTMLCanvasElement;
+    private ctx: CanvasRenderingContext2D;
+    private state: PegState;
+    private tokens!: Tokens;
+    private padding = 20;
+    private dpr = 1;
+    private confetti: ConfettiParticle[] = [];
+    private winShown = false;
+    private stuckShown = false;
+    private lastTime = 0;
+    private animating = false;
+
+    constructor(
+      canvas: HTMLCanvasElement,
+      private moveCounter: HTMLElement,
+    ) {
+      this.canvas = canvas;
+      this.ctx = canvas.getContext('2d')!;
+      this.readTokens();
+      this.state = createState();
+      this.setupCanvas();
+      this.render();
+      this.canvas.addEventListener('pointerdown', (e) => {
+        this.canvas.focus();
+        this.onPointerDown(e);
+      });
+      this.canvas.addEventListener('pointermove', (e) => this.onPointerMove(e));
+    }
+
+    private readTokens() {
+      const s = getComputedStyle(document.documentElement);
+      const g = (v: string, fb: string) => s.getPropertyValue(v).trim() || fb;
+      const n = (v: string, fb: number) => parseFloat(g(v, String(fb))) || fb;
+      this.tokens = {
+        cellSize: n('--peg-cell-size', 30),
+        holeColor: g('--peg-hole-color', '#3a3020'),
+        holeOpacity: n('--peg-hole-opacity', 0.15),
+        pegColor: g('--peg-color', '#3a3020'),
+        pegRadius: n('--peg-radius', 10),
+        selectedColor: g('--peg-selected-color', '#c47a2a'),
+        selectedGlow: g('--peg-selected-glow', 'rgba(196, 122, 42, 0.3)'),
+        targetColor: g('--peg-target-color', '#c47a2a'),
+        targetOpacity: n('--peg-target-opacity', 0.3),
+        confettiCount: n('--lo-confetti-count', 60),
+        confettiGravity: n('--lo-confetti-gravity', 400),
+        confettiSpread: n('--lo-confetti-spread', 300),
+      };
+    }
+
+    private setupCanvas() {
+      const { cellSize } = this.tokens;
+      const w = BOARD_SIZE * cellSize + this.padding * 2;
+      const h = BOARD_SIZE * cellSize + this.padding * 2;
+      this.dpr = window.devicePixelRatio || 1;
+      this.canvas.width = w * this.dpr;
+      this.canvas.height = h * this.dpr;
+      this.canvas.style.width = w + 'px';
+      this.canvas.style.height = h + 'px';
+      this.ctx.setTransform(this.dpr, 0, 0, this.dpr, 0, 0);
+    }
+
+    private cellCenter(row: number, col: number): { x: number; y: number } {
+      const { cellSize } = this.tokens;
+      return {
+        x: this.padding + col * cellSize + cellSize / 2,
+        y: this.padding + row * cellSize + cellSize / 2,
+      };
+    }
+
+    private render() {
+      const { ctx, tokens, state, padding } = this;
+      const { cellSize } = tokens;
+      const w = BOARD_SIZE * cellSize + padding * 2;
+      const h = BOARD_SIZE * cellSize + padding * 2;
+
+      ctx.clearRect(0, 0, w, h);
+
+      const monoFont = getComputedStyle(document.documentElement)
+        .getPropertyValue('--font-mono')
+        .trim() || 'monospace';
+
+      // Valid moves for selected peg
+      const selectedMoves: PegMove[] =
+        state.selectedPeg ? getMovesForPeg(state, state.selectedPeg) : [];
+      const targetSet = new Set<string>();
+      for (const m of selectedMoves) {
+        targetSet.add(`${m.to.row},${m.to.col}`);
+      }
+
+      // Draw board holes and pegs
+      for (let r = 0; r < BOARD_SIZE; r++) {
+        for (let c = 0; c < BOARD_SIZE; c++) {
+          if (!VALID_CELLS[r][c]) continue;
+
+          const { x, y } = this.cellCenter(r, c);
+          const hasPeg = state.board[r][c];
+          const isSelected =
+            state.selectedPeg !== null &&
+            state.selectedPeg.row === r &&
+            state.selectedPeg.col === c;
+          const isTarget = targetSet.has(`${r},${c}`);
+
+          if (hasPeg) {
+            // Selected peg glow
+            if (isSelected) {
+              ctx.save();
+              ctx.fillStyle = tokens.selectedGlow;
+              ctx.beginPath();
+              ctx.arc(x, y, tokens.pegRadius + 5, 0, Math.PI * 2);
+              ctx.fill();
+              ctx.restore();
+            }
+
+            // Peg circle
+            ctx.beginPath();
+            ctx.arc(x, y, tokens.pegRadius, 0, Math.PI * 2);
+            ctx.fillStyle = isSelected ? tokens.selectedColor : tokens.pegColor;
+            ctx.fill();
+
+            // Selection ring
+            if (isSelected) {
+              ctx.strokeStyle = tokens.selectedColor;
+              ctx.lineWidth = 2;
+              ctx.stroke();
+            }
+          } else {
+            // Empty hole
+            ctx.save();
+            ctx.globalAlpha = tokens.holeOpacity;
+            ctx.fillStyle = tokens.holeColor;
+            ctx.beginPath();
+            ctx.arc(x, y, 3, 0, Math.PI * 2);
+            ctx.fill();
+            ctx.restore();
+
+            // Center marker — subtle ring when empty
+            if (r === CENTER.row && c === CENTER.col) {
+              ctx.save();
+              ctx.strokeStyle = tokens.selectedColor;
+              ctx.globalAlpha = 0.2;
+              ctx.lineWidth = 1;
+              ctx.setLineDash([2, 2]);
+              ctx.beginPath();
+              ctx.arc(x, y, tokens.pegRadius + 2, 0, Math.PI * 2);
+              ctx.stroke();
+              ctx.restore();
+            }
+
+            // Valid move target highlight
+            if (isTarget) {
+              ctx.save();
+              // Fill
+              ctx.fillStyle = tokens.targetColor;
+              ctx.globalAlpha = 0.12;
+              ctx.beginPath();
+              ctx.arc(x, y, tokens.pegRadius + 2, 0, Math.PI * 2);
+              ctx.fill();
+              // Dashed ring
+              ctx.strokeStyle = tokens.targetColor;
+              ctx.globalAlpha = 0.6;
+              ctx.lineWidth = 1.5;
+              ctx.setLineDash([3, 3]);
+              ctx.beginPath();
+              ctx.arc(x, y, tokens.pegRadius + 2, 0, Math.PI * 2);
+              ctx.stroke();
+              ctx.restore();
+            }
+          }
+        }
+      }
+
+      // Confetti
+      for (const p of this.confetti) {
+        if (p.life <= 0) continue;
+        ctx.save();
+        ctx.globalAlpha = Math.max(0, p.life);
+        ctx.translate(p.x, p.y);
+        ctx.rotate(p.angle);
+        ctx.fillStyle = p.color;
+        ctx.fillRect(-p.w / 2, -p.h / 2, p.w, p.h);
+        ctx.restore();
+      }
+
+      // Win pill
+      if (state.solved && this.winShown) {
+        ctx.save();
+        const label = 'solved!';
+        ctx.font = `bold 1.2rem ${monoFont}`;
+        const textW = ctx.measureText(label).width;
+        const pillPadX = 12;
+        const pillPadY = 5;
+        const pillW = textW + pillPadX * 2;
+        const pillH = 18 + pillPadY * 2;
+        const pillX = w / 2 - pillW / 2;
+        const pillY = h - this.padding - pillH + 2;
+
+        ctx.globalAlpha = 0.75;
+        ctx.fillStyle = tokens.selectedColor;
+        ctx.beginPath();
+        ctx.roundRect(pillX, pillY, pillW, pillH, pillH / 2);
+        ctx.fill();
+
+        ctx.globalAlpha = 1;
+        ctx.fillStyle = '#f0e8d8';
+        ctx.textAlign = 'center';
+        ctx.textBaseline = 'middle';
+        ctx.fillText(label, w / 2, pillY + pillH / 2);
+        ctx.restore();
+      }
+
+      // Stuck pill
+      if (this.stuckShown && !state.solved) {
+        ctx.save();
+        const label = 'stuck — undo to continue';
+        ctx.font = `bold 0.7rem ${monoFont}`;
+        const textW = ctx.measureText(label).width;
+        const pillPadX = 10;
+        const pillPadY = 4;
+        const pillW = textW + pillPadX * 2;
+        const pillH = 14 + pillPadY * 2;
+        const pillX = w / 2 - pillW / 2;
+        const pillY = h - this.padding - pillH + 2;
+
+        ctx.globalAlpha = 0.6;
+        ctx.fillStyle = tokens.pegColor;
+        ctx.beginPath();
+        ctx.roundRect(pillX, pillY, pillW, pillH, pillH / 2);
+        ctx.fill();
+
+        ctx.globalAlpha = 0.9;
+        ctx.fillStyle = '#f0e8d8';
+        ctx.textAlign = 'center';
+        ctx.textBaseline = 'middle';
+        ctx.fillText(label, w / 2, pillY + pillH / 2);
+        ctx.restore();
+      }
+    }
+
+    private onPointerDown(e: PointerEvent) {
+      if (this.state.solved) return;
+
+      const rect = this.canvas.getBoundingClientRect();
+      const px = e.clientX - rect.left;
+      const py = e.clientY - rect.top;
+
+      const hit = hitTestCell(px, py, this.tokens.cellSize, this.padding);
+      if (!hit) return;
+
+      const hasPeg = this.state.board[hit.row][hit.col];
+
+      // If a peg is already selected
+      if (this.state.selectedPeg !== null) {
+        // Clicking same peg → deselect
+        if (
+          this.state.selectedPeg.row === hit.row &&
+          this.state.selectedPeg.col === hit.col
+        ) {
+          this.state = { ...this.state, selectedPeg: null };
+          this.render();
+          return;
+        }
+
+        // Clicking a valid target → make the move
+        const moves = getMovesForPeg(this.state, this.state.selectedPeg);
+        const move = moves.find(
+          (m) => m.to.row === hit.row && m.to.col === hit.col,
+        );
+        if (move) {
+          this.doMove(move);
+          return;
+        }
+
+        // Clicking a different peg → select it instead
+        if (hasPeg) {
+          this.state = { ...this.state, selectedPeg: hit };
+          this.render();
+          return;
+        }
+
+        // Clicking empty non-target → deselect
+        this.state = { ...this.state, selectedPeg: null };
+        this.render();
+        return;
+      }
+
+      // No peg selected — select this one if it's a peg
+      if (hasPeg) {
+        this.state = { ...this.state, selectedPeg: hit };
+        this.render();
+      }
+    }
+
+    private onPointerMove(e: PointerEvent) {
+      if (this.state.solved) {
+        this.canvas.style.cursor = 'default';
+        return;
+      }
+      const rect = this.canvas.getBoundingClientRect();
+      const px = e.clientX - rect.left;
+      const py = e.clientY - rect.top;
+      const hit = hitTestCell(px, py, this.tokens.cellSize, this.padding);
+
+      if (hit) {
+        const hasPeg = this.state.board[hit.row][hit.col];
+        if (hasPeg) {
+          this.canvas.style.cursor = 'pointer';
+          return;
+        }
+        // Check if it's a valid target
+        if (this.state.selectedPeg) {
+          const moves = getMovesForPeg(this.state, this.state.selectedPeg);
+          const isTarget = moves.some(
+            (m) => m.to.row === hit.row && m.to.col === hit.col,
+          );
+          if (isTarget) {
+            this.canvas.style.cursor = 'pointer';
+            return;
+          }
+        }
+      }
+      this.canvas.style.cursor = 'default';
+    }
+
+    private doMove(move: PegMove) {
+      this.state = makeMove(this.state, move);
+      this.stuckShown = false;
+      this.updateCounter();
+
+      if (this.state.solved && !this.winShown) {
+        this.winShown = true;
+        const { cellSize } = this.tokens;
+        const cx = BOARD_SIZE * cellSize / 2 + this.padding;
+        const cy = BOARD_SIZE * cellSize / 2 + this.padding;
+        this.confetti = spawnConfetti(
+          cx, cy,
+          this.tokens.confettiCount,
+          this.tokens.confettiSpread,
+          ['#c47a2a', '#e8b85a', '#f0d88a', '#3a3020', '#5a4a30'],
+        );
+        this.startAnimating();
+      }
+
+      if (isStuck(this.state)) {
+        this.stuckShown = true;
+      }
+
+      this.render();
+    }
+
+    undo() {
+      if (!canUndo(this.state)) return;
+      this.state = undoMove(this.state);
+      this.winShown = false;
+      this.stuckShown = false;
+      this.confetti = [];
+      this.updateCounter();
+
+      if (isStuck(this.state)) {
+        this.stuckShown = true;
+      }
+      this.render();
+    }
+
+    reset() {
+      this.state = resetPuzzle();
+      this.winShown = false;
+      this.stuckShown = false;
+      this.confetti = [];
+      this.updateCounter();
+      this.render();
+    }
+
+    private startAnimating() {
+      if (this.animating) return;
+      this.animating = true;
+      this.lastTime = performance.now();
+      const loop = (now: number) => {
+        const dt = Math.min((now - this.lastTime) / 1000, 0.05);
+        this.lastTime = now;
+        const alive = stepConfetti(this.confetti, dt, this.tokens.confettiGravity);
+        this.render();
+        if (alive > 0) {
+          requestAnimationFrame(loop);
+        } else {
+          this.animating = false;
+        }
+      };
+      requestAnimationFrame(loop);
+    }
+
+    private updateCounter() {
+      this.moveCounter.textContent =
+        `moves: ${this.state.moves} · pegs: ${this.state.pegsRemaining}`;
+    }
+  }
+
+  // ─── Conway's Soldiers Renderer ──────────────────────────
+
+  class SoldiersRenderer {
+    private canvas: HTMLCanvasElement;
+    private ctx: CanvasRenderingContext2D;
+    private state: SoldiersState;
+    private cellSize = 22;
+    private padding = 14;
+    private dpr = 1;
+    private pegColor: string;
+    private holeColor: string;
+    private selectedColor: string;
+    private selectedGlow: string;
+    private targetColor: string;
+    private valueEl: HTMLElement;
+
+    constructor(canvas: HTMLCanvasElement, valueEl: HTMLElement) {
+      this.canvas = canvas;
+      this.ctx = canvas.getContext('2d')!;
+      this.valueEl = valueEl;
+      this.state = createSoldiersState();
+
+      const s = getComputedStyle(document.documentElement);
+      const g = (v: string, fb: string) => s.getPropertyValue(v).trim() || fb;
+      this.pegColor = g('--peg-color', '#3a3020');
+      this.holeColor = g('--peg-hole-color', '#3a3020');
+      this.selectedColor = g('--peg-selected-color', '#c47a2a');
+      this.selectedGlow = g('--peg-selected-glow', 'rgba(196, 122, 42, 0.3)');
+      this.targetColor = g('--peg-target-color', '#c47a2a');
+
+      this.setupCanvas();
+      this.render();
+      this.updateValue();
+
+      this.canvas.addEventListener('pointerdown', (e) => this.onPointerDown(e));
+      this.canvas.addEventListener('pointermove', (e) => this.onPointerMove(e));
+    }
+
+    private setupCanvas() {
+      const w = this.state.cols * this.cellSize + this.padding * 2;
+      const h = this.state.rows * this.cellSize + this.padding * 2;
+      this.dpr = window.devicePixelRatio || 1;
+      this.canvas.width = w * this.dpr;
+      this.canvas.height = h * this.dpr;
+      this.canvas.style.width = w + 'px';
+      this.canvas.style.height = h + 'px';
+      this.ctx.setTransform(this.dpr, 0, 0, this.dpr, 0, 0);
+    }
+
+    private cellCenter(row: number, col: number): { x: number; y: number } {
+      return {
+        x: this.padding + col * this.cellSize + this.cellSize / 2,
+        y: this.padding + row * this.cellSize + this.cellSize / 2,
+      };
+    }
+
+    private render() {
+      const { ctx, state, padding, cellSize } = this;
+      const w = state.cols * cellSize + padding * 2;
+      const h = state.rows * cellSize + padding * 2;
+
+      ctx.clearRect(0, 0, w, h);
+
+      // Draw the dividing line
+      const lineY = padding + (state.lineRow + 1) * cellSize;
+      ctx.save();
+      ctx.strokeStyle = this.selectedColor;
+      ctx.globalAlpha = 0.35;
+      ctx.lineWidth = 1;
+      ctx.setLineDash([4, 4]);
+      ctx.beginPath();
+      ctx.moveTo(padding, lineY);
+      ctx.lineTo(w - padding, lineY);
+      ctx.stroke();
+      ctx.restore();
+
+      // Valid moves for selected peg
+      const selectedMoves: PegMove[] =
+        state.selectedPeg ? getSoldiersMovesForPeg(state, state.selectedPeg) : [];
+      const targetSet = new Set<string>();
+      for (const m of selectedMoves) {
+        targetSet.add(`${m.to.row},${m.to.col}`);
+      }
+
+      // Draw cells
+      for (let r = 0; r < state.rows; r++) {
+        for (let c = 0; c < state.cols; c++) {
+          const { x, y } = this.cellCenter(r, c);
+          const hasPeg = state.board[r][c];
+          const isSelected =
+            state.selectedPeg !== null &&
+            state.selectedPeg.row === r &&
+            state.selectedPeg.col === c;
+          const isTarget = targetSet.has(`${r},${c}`);
+
+          // Pagoda weight shading for cells above the line
+          if (r <= state.lineRow) {
+            const weight = cellWeight(r, c, state.targetRow, state.targetCol);
+            ctx.save();
+            ctx.fillStyle = this.selectedColor;
+            ctx.globalAlpha = Math.min(weight * 0.25, 0.25);
+            ctx.fillRect(
+              x - cellSize / 2 + 1,
+              y - cellSize / 2 + 1,
+              cellSize - 2,
+              cellSize - 2,
+            );
+            ctx.restore();
+          }
+
+          // Target cell marker (row 0, center col)
+          if (r === state.targetRow && c === state.targetCol) {
+            ctx.save();
+            ctx.strokeStyle = this.selectedColor;
+            ctx.globalAlpha = 0.4;
+            ctx.lineWidth = 1.5;
+            ctx.setLineDash([2, 2]);
+            ctx.beginPath();
+            ctx.arc(x, y, 8, 0, Math.PI * 2);
+            ctx.stroke();
+            ctx.restore();
+          }
+
+          if (hasPeg) {
+            // Selected glow
+            if (isSelected) {
+              ctx.save();
+              ctx.fillStyle = this.selectedGlow;
+              ctx.beginPath();
+              ctx.arc(x, y, 8, 0, Math.PI * 2);
+              ctx.fill();
+              ctx.restore();
+            }
+
+            // Peg
+            ctx.beginPath();
+            ctx.arc(x, y, 5, 0, Math.PI * 2);
+            ctx.fillStyle = isSelected ? this.selectedColor : this.pegColor;
+            ctx.fill();
+
+            if (isSelected) {
+              ctx.strokeStyle = this.selectedColor;
+              ctx.lineWidth = 1.5;
+              ctx.stroke();
+            }
+          } else {
+            // Empty hole
+            ctx.save();
+            ctx.globalAlpha = 0.1;
+            ctx.fillStyle = this.holeColor;
+            ctx.beginPath();
+            ctx.arc(x, y, 2, 0, Math.PI * 2);
+            ctx.fill();
+            ctx.restore();
+
+            // Valid move target
+            if (isTarget) {
+              ctx.save();
+              ctx.fillStyle = this.targetColor;
+              ctx.globalAlpha = 0.12;
+              ctx.beginPath();
+              ctx.arc(x, y, 7, 0, Math.PI * 2);
+              ctx.fill();
+              ctx.strokeStyle = this.targetColor;
+              ctx.globalAlpha = 0.6;
+              ctx.lineWidth = 1;
+              ctx.setLineDash([2, 2]);
+              ctx.beginPath();
+              ctx.arc(x, y, 7, 0, Math.PI * 2);
+              ctx.stroke();
+              ctx.restore();
+            }
+          }
+        }
+      }
+
+      // "Row N" labels on the left for rows above the line
+      ctx.save();
+      const monoFont = getComputedStyle(document.documentElement)
+        .getPropertyValue('--font-mono').trim() || 'monospace';
+      ctx.font = `0.4rem ${monoFont}`;
+      ctx.fillStyle = this.pegColor;
+      ctx.textAlign = 'right';
+      ctx.textBaseline = 'middle';
+      ctx.globalAlpha = 0.25;
+      for (let r = 0; r <= state.lineRow; r++) {
+        const dist = state.lineRow - r;
+        const { y } = this.cellCenter(r, 0);
+        ctx.fillText(`${dist}`, padding - 4, y);
+      }
+      ctx.restore();
+    }
+
+    private onPointerDown(e: PointerEvent) {
+      const rect = this.canvas.getBoundingClientRect();
+      const px = e.clientX - rect.left;
+      const py = e.clientY - rect.top;
+
+      const hit = hitTestSoldiersCell(px, py, this.cellSize, this.padding, this.state);
+      if (!hit) return;
+
+      const hasPeg = this.state.board[hit.row][hit.col];
+
+      if (this.state.selectedPeg !== null) {
+        // Clicking same peg → deselect
+        if (
+          this.state.selectedPeg.row === hit.row &&
+          this.state.selectedPeg.col === hit.col
+        ) {
+          this.state = { ...this.state, selectedPeg: null };
+          this.render();
+          return;
+        }
+
+        // Clicking a valid target → make the move
+        const moves = getSoldiersMovesForPeg(this.state, this.state.selectedPeg);
+        const move = moves.find(
+          (m) => m.to.row === hit.row && m.to.col === hit.col,
+        );
+        if (move) {
+          this.state = makeSoldiersMove(this.state, move);
+          this.state = { ...this.state, selectedPeg: null };
+          this.updateValue();
+          this.render();
+          return;
+        }
+
+        // Clicking a different peg → select it
+        if (hasPeg) {
+          this.state = { ...this.state, selectedPeg: hit };
+          this.render();
+          return;
+        }
+
+        // Clicking empty non-target → deselect
+        this.state = { ...this.state, selectedPeg: null };
+        this.render();
+        return;
+      }
+
+      // No peg selected — select if it's a peg
+      if (hasPeg) {
+        this.state = { ...this.state, selectedPeg: hit };
+        this.render();
+      }
+    }
+
+    private onPointerMove(e: PointerEvent) {
+      const rect = this.canvas.getBoundingClientRect();
+      const px = e.clientX - rect.left;
+      const py = e.clientY - rect.top;
+      const hit = hitTestSoldiersCell(px, py, this.cellSize, this.padding, this.state);
+
+      if (hit) {
+        const hasPeg = this.state.board[hit.row][hit.col];
+        if (hasPeg) {
+          this.canvas.style.cursor = 'pointer';
+          return;
+        }
+        if (this.state.selectedPeg) {
+          const moves = getSoldiersMovesForPeg(this.state, this.state.selectedPeg);
+          const isTarget = moves.some(
+            (m) => m.to.row === hit.row && m.to.col === hit.col,
+          );
+          if (isTarget) {
+            this.canvas.style.cursor = 'pointer';
+            return;
+          }
+        }
+      }
+      this.canvas.style.cursor = 'default';
+    }
+
+    private updateValue() {
+      const total = boardPagodaTotal(this.state);
+      const highest = this.state.lineRow - this.state.highestReached;
+      this.valueEl.textContent =
+        `pagoda: ${total.toFixed(3)} / need: ≥ 1.000 · best: row ${highest}`;
+    }
+
+    undo() {
+      this.state = undoSoldiersMove(this.state);
+      this.state = { ...this.state, selectedPeg: null };
+      this.updateValue();
+      this.render();
+    }
+
+    reset() {
+      this.state = createSoldiersState();
+      this.updateValue();
+      this.render();
+    }
+  }
+
+  // ─── Boot ─────────────────────────────────────────────────
+
+  const canvas = document.getElementById('peg-canvas') as HTMLCanvasElement;
+  const moveCounter = document.getElementById('peg-moves')!;
+  const renderer = new PegRenderer(canvas, moveCounter);
+
+  // Undo
+  document.getElementById('peg-undo')?.addEventListener('click', () => {
+    renderer.undo();
+  });
+
+  // Reset
+  document.getElementById('peg-reset')?.addEventListener('click', () => {
+    renderer.reset();
+  });
+
+  // Overlay
+  const dialog = document.getElementById('peg-overlay') as HTMLDialogElement;
+  let soldiers: SoldiersRenderer | null = null;
+
+  function openOverlay() {
+    if (!dialog) return;
+    dialog.showModal();
+    document.body.style.overflow = 'hidden';
+    // Lazy-init soldiers renderer on first open
+    if (!soldiers) {
+      const c = document.getElementById('peg-soldiers-canvas') as HTMLCanvasElement;
+      const v = document.getElementById('peg-soldiers-value')!;
+      if (c && v) soldiers = new SoldiersRenderer(c, v);
+    }
+  }
+
+  function closeOverlay() {
+    if (!dialog) return;
+    dialog.close();
+    document.body.style.overflow = '';
+  }
+
+  document.getElementById('peg-help')?.addEventListener('click', openOverlay);
+  document.getElementById('peg-overlay-close')?.addEventListener('click', closeOverlay);
+
+  dialog?.addEventListener('click', (e) => {
+    if (e.target === dialog) closeOverlay();
+  });
+
+  dialog?.addEventListener('cancel', () => {
+    document.body.style.overflow = '';
+  });
+
+  // Soldiers controls
+  document.getElementById('peg-soldiers-undo')?.addEventListener('click', () => {
+    soldiers?.undo();
+  });
+  document.getElementById('peg-soldiers-reset')?.addEventListener('click', () => {
+    soldiers?.reset();
+  });
+</script>
