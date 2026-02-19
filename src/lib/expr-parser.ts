@@ -48,6 +48,10 @@ const ALLOWED_FUNCS: Record<string, Function> = {
   pow: Math.pow,
 };
 
+// Sorted longest-first for greedy prefix matching
+const FUNC_NAMES_BY_LENGTH = Object.keys(ALLOWED_FUNCS).sort((a, b) => b.length - a.length);
+const VAR_NAMES_BY_LENGTH = [...ALLOWED_VARS].sort((a, b) => b.length - a.length);
+
 function tokenize(input: string): Token[] {
   const tokens: Token[] = [];
   let i = 0;
@@ -83,6 +87,93 @@ function tokenize(input: string): Token[] {
 
   tokens.push({ type: 'eof', value: '', pos: input.length });
   return tokens;
+}
+
+// ─── Preprocessing (implied multiplication & compound splitting) ─
+
+/**
+ * Recursively split a compound identifier like "sinx" into known
+ * functions/variables: ["sin", "x"]. Returns null if unsplittable.
+ */
+function splitIdentifier(name: string, pos: number): Token[] | null {
+  if (ALLOWED_VARS.has(name) || name in ALLOWED_FUNCS) {
+    return [{ type: 'ident', value: name, pos }];
+  }
+
+  // Try function prefixes first (longest match wins)
+  for (const func of FUNC_NAMES_BY_LENGTH) {
+    if (name.length > func.length && name.startsWith(func)) {
+      const rest = splitIdentifier(name.slice(func.length), pos + func.length);
+      if (rest) return [{ type: 'ident', value: func, pos }, ...rest];
+    }
+  }
+
+  // Then variable prefixes (longest match wins)
+  for (const v of VAR_NAMES_BY_LENGTH) {
+    if (name.length > v.length && name.startsWith(v)) {
+      const rest = splitIdentifier(name.slice(v.length), pos + v.length);
+      if (rest) return [{ type: 'ident', value: v, pos }, ...rest];
+    }
+  }
+
+  return null;
+}
+
+/**
+ * Two-phase token preprocessing:
+ * 1. Split compound identifiers (e.g. "sinx" → "sin", "x")
+ * 2. Insert implicit "*" where multiplication is implied
+ *    (e.g. "2x" → "2 * x", "x(" → "x * (", ")x" → ") * x")
+ */
+function preprocessTokens(tokens: Token[]): Token[] {
+  // Phase 1: Split compound identifiers
+  let result: Token[] = [];
+  for (const tok of tokens) {
+    if (tok.type === 'ident' && !ALLOWED_VARS.has(tok.value) && !(tok.value in ALLOWED_FUNCS)) {
+      const parts = splitIdentifier(tok.value, tok.pos);
+      if (parts) {
+        result.push(...parts);
+      } else {
+        result.push(tok); // Unknown — parser will produce the error
+      }
+    } else {
+      result.push(tok);
+    }
+  }
+
+  // Phase 2: Insert implicit multiplication
+  const final: Token[] = [];
+  for (let i = 0; i < result.length; i++) {
+    final.push(result[i]);
+    if (i + 1 >= result.length) continue;
+
+    const curr = result[i];
+    const next = result[i + 1];
+
+    // Current token categories
+    const currIsVar = curr.type === 'ident' && ALLOWED_VARS.has(curr.value);
+    const currIsNum = curr.type === 'number';
+    const currIsRParen = curr.type === 'rparen';
+
+    // Next token categories
+    const nextIsIdent = next.type === 'ident';
+    const nextIsNum = next.type === 'number';
+    const nextIsLParen = next.type === 'lparen';
+
+    // Insert * between tokens that imply multiplication.
+    // Function idents (sin, cos, …) are excluded as "curr" because
+    // the parser handles implicit function calls (e.g. sin x → sin(x)).
+    const needsMul =
+      (currIsNum && (nextIsIdent || nextIsLParen)) ||
+      (currIsRParen && (nextIsNum || nextIsIdent || nextIsLParen)) ||
+      (currIsVar && (nextIsNum || nextIsIdent || nextIsLParen));
+
+    if (needsMul) {
+      final.push({ type: 'op', value: '*', pos: next.pos });
+    }
+  }
+
+  return final;
 }
 
 // ─── Parser ─────────────────────────────────────────────────────
@@ -170,24 +261,32 @@ class Parser {
     return this.parseCall();
   }
 
-  // call -> IDENT '(' expr (',' expr)* ')' | primary
+  // call -> IDENT '(' expr (',' expr)* ')' | IDENT unary | primary
   private parseCall(): ExprNode {
-    if (this.peek().type === 'ident' && this.pos + 1 < this.tokens.length && this.tokens[this.pos + 1].type === 'lparen') {
-      const name = this.advance().value;
-      if (!(name in ALLOWED_FUNCS)) {
-        throw new ParseError(`Unknown function '${name}'`, this.tokens[this.pos - 1].pos);
-      }
-      this.expect('lparen');
-      const args: ExprNode[] = [];
-      if (this.peek().type !== 'rparen') {
-        args.push(this.parseExpr());
-        while (this.peek().type === 'comma') {
-          this.advance();
+    if (this.peek().type === 'ident' && this.peek().value in ALLOWED_FUNCS) {
+      const name = this.peek().value;
+      if (this.pos + 1 < this.tokens.length && this.tokens[this.pos + 1].type === 'lparen') {
+        // Standard function call: func(args)
+        this.advance();
+        this.expect('lparen');
+        const args: ExprNode[] = [];
+        if (this.peek().type !== 'rparen') {
           args.push(this.parseExpr());
+          while (this.peek().type === 'comma') {
+            this.advance();
+            args.push(this.parseExpr());
+          }
         }
+        this.expect('rparen');
+        return { type: 'call', name, args };
+      } else {
+        // Implicit function call without parens: sin x → sin(x)
+        // Parses the next unary expression as the single argument,
+        // so "sin -x" → sin(-x), "sin cos x" → sin(cos(x))
+        this.advance();
+        const arg = this.parseUnary();
+        return { type: 'call', name, args: [arg] };
       }
-      this.expect('rparen');
-      return { type: 'call', name, args };
     }
     return this.parsePrimary();
   }
@@ -229,7 +328,8 @@ class Parser {
 
 export function parseExpression(input: string): ExprNode {
   if (!input.trim()) throw new ParseError('Empty expression', 0);
-  const tokens = tokenize(input);
+  const raw = tokenize(input);
+  const tokens = preprocessTokens(raw);
   return new Parser(tokens).parse();
 }
 

@@ -86,6 +86,10 @@
     private rippleFade = 0.3;
     private rippleRadius = 600;
 
+    // Footer tiling zone (organic curved boundary)
+    private footerRise = 200;        // px higher at edges vs center
+    private footerFade = 100;        // px fade distance
+
     // Audio: subtle pen-click via Web Audio API
     private audioCtx: AudioContext | null = null;
 
@@ -125,6 +129,11 @@
       if (bgLightHex) this.bgLight = hexToRgb(bgLightHex);
       if (bgDarkHex) this.bgDark = hexToRgb(bgDarkHex);
 
+      const footerRise = parseFloat(styles.getPropertyValue('--tile-footer-rise').trim());
+      if (!isNaN(footerRise)) this.footerRise = footerRise;
+      const footerFade = parseFloat(styles.getPropertyValue('--tile-footer-fade').trim());
+      if (!isNaN(footerFade)) this.footerFade = footerFade;
+
       this.clickCounterEl = document.getElementById('tile-click-counter');
       this.init();
     }
@@ -143,6 +152,14 @@
         this.updateCardBounds();
         this.scheduleRender();
       });
+      // Re-measure card bounds when content changes size (e.g. puzzle canvases init)
+      const card = document.querySelector('.content-card');
+      if (card) {
+        new ResizeObserver(() => {
+          this.updateCardBounds();
+          this.scheduleRender();
+        }).observe(card);
+      }
       window.addEventListener('scroll', () => {
         this.scrollY = window.scrollY;
         this.scheduleRender();
@@ -236,28 +253,38 @@
     /**
      * Compute tile visibility alpha.
      * Tiles visible in the left margin (left of content card) and
-     * below the content card (bottom strip), both with a smooth
-     * 80px fade near the card edge.
+     * below the content card (bottom strip).
+     *
+     * The bottom boundary is an organic parabolic curve:
+     * tiles appear higher at the viewport edges, lower in the center.
+     * This creates a bowl-shaped footer rather than a flat line.
      */
     private getTileAlpha(sx: number, sy: number): number {
-      const fadeDistance = 80;
+      const fade = this.footerFade;
 
       // Horizontal alpha (left margin zone)
       let hAlpha = 0;
       if (sx < this.cardLeft) {
         const dist = this.cardLeft - sx;
-        hAlpha = dist < fadeDistance
-          ? this.outlineOpacity * (dist / fadeDistance)
+        hAlpha = dist < fade
+          ? this.outlineOpacity * (dist / fade)
           : this.outlineOpacity;
       }
 
-      // Vertical alpha (bottom strip zone)
+      // Vertical alpha (bottom strip zone) with organic curved boundary
       let vAlpha = 0;
       const cardBottomScreen = this.cardAbsBottom - this.scrollY;
-      if (sy > cardBottomScreen) {
-        const dist = sy - cardBottomScreen;
-        vAlpha = dist < fadeDistance
-          ? this.outlineOpacity * (dist / fadeDistance)
+      const w = window.innerWidth;
+      const centerX = w / 2;
+      // 0 at center, 1 at edges — quadratic for smooth parabolic curve
+      const edgeDist = Math.abs(sx - centerX) / centerX;
+      const rise = this.footerRise * edgeDist * edgeDist;
+      const threshold = cardBottomScreen - rise;
+
+      if (sy > threshold) {
+        const dist = sy - threshold;
+        vAlpha = dist < fade
+          ? this.outlineOpacity * (dist / fade)
           : this.outlineOpacity;
       }
 
@@ -663,8 +690,8 @@
 
         // Early cull: check centroid before transforming all vertices
         const screenCentroid = this.worldToScreen(tile.centroid);
-        // Skip tiles outside both visible zones (left margin + bottom strip)
-        if (screenCentroid.x > this.cardLeft + 50 && screenCentroid.y < cardBottomScreen - 50) continue;
+        // Skip tiles outside both visible zones (left margin + bottom strip with organic rise)
+        if (screenCentroid.x > this.cardLeft + 50 && screenCentroid.y < cardBottomScreen - this.footerRise - 50) continue;
         if (screenCentroid.y < -100 || screenCentroid.y > canvasH + 100) continue;
 
         const alpha = this.getTileAlpha(screenCentroid.x, screenCentroid.y);

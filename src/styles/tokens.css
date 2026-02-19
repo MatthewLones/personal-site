@@ -20,6 +20,11 @@
   --font-body: 'Playfair Display', Georgia, serif;
   --font-mono: 'JetBrains Mono', ui-monospace, monospace;
 
+  /* Interactive Controls (shared across puzzles + vector field) */
+  --controls-font: var(--font-body);
+  --controls-font-size: 0.75rem;
+  --controls-font-size-sm: 0.7rem;
+
   /* ═══════════════════════════════════════════
      Monotile Tiling
      ═══════════════════════════════════════════ */
@@ -36,6 +41,13 @@
   --tile-ripple-speed: 1200;
   --tile-ripple-fade: 0.25;
   --tile-ripple-radius: 600;
+
+  /* Footer Tiling Zone
+     Tiles rise organically from below the content card.
+     The boundary curves upward at the viewport edges
+     (parabolic bowl) for a non-flat, organic look. */
+  --tile-footer-rise: 200;
+  --tile-footer-fade: 100;
 
   /* ═══════════════════════════════════════════
      Vector Field (right margin interactive)
@@ -60,8 +72,9 @@
   --vf-ball-trail: 8;
 
   /* Dashboard */
-  --vf-dashboard-opacity: 0.3;
-  --vf-dashboard-hover-opacity: 0.7;
+  --vf-dashboard-opacity: 0.45;
+  --vf-dropdown-bg: #a8b29a;
+  --vf-dropdown-divider: rgba(58, 48, 32, 0.15);
 
   /* Wind Transition */
   --vf-wind-speed: 650;
@@ -111,7 +124,7 @@
      full-page monotile background.
      ═══════════════════════════════════════════ */
   --content-card-bg: transparent;
-  --content-card-blur: 8px;
+  --content-card-blur: 0px;
   --content-card-border: transparent;
 
   /* ═══════════════════════════════════════════
@@ -199,8 +212,7 @@
   --lo-toggle-duration: 0.12;
 
   /* Controls */
-  --lo-controls-opacity: 0.3;
-  --lo-controls-hover-opacity: 0.7;
+  --lo-controls-opacity: 0.45;
 
   /* Confetti */
   --lo-confetti-count: 60;
@@ -244,8 +256,7 @@
   --peg-target-opacity: 0.3;
 
   /* Controls */
-  --peg-controls-opacity: 0.3;
-  --peg-controls-hover-opacity: 0.7;
+  --peg-controls-opacity: 0.45;
   --peg-border-color: #3a3020;
 
   /* Overlay */
@@ -282,8 +293,7 @@
   --bfk-heart-color: #c47a2a;
 
   /* Controls */
-  --bfk-controls-opacity: 0.3;
-  --bfk-controls-hover-opacity: 0.7;
+  --bfk-controls-opacity: 0.45;
   --bfk-border-color: #3a3020;
 
   /* Overlay */

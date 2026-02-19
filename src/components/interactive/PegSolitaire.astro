@@ -8,12 +8,12 @@
 ---
 
 <div class="peg-container">
+  <h3 class="peg-title" id="peg-title">Peg Solitaire</h3>
   <canvas id="peg-canvas" class="peg-canvas" tabindex="0"></canvas>
   <div class="peg-controls">
     <div class="peg-mode-bar">
       <button class="peg-btn" id="peg-undo">undo</button>
       <button class="peg-btn" id="peg-reset">reset</button>
-      <button class="peg-btn" id="peg-help">?</button>
     </div>
     <span class="peg-move-counter" id="peg-moves">moves: 0 · pegs: 32</span>
   </div>
@@ -96,6 +96,21 @@
     width: fit-content;
   }
 
+  .peg-title {
+    font-family: var(--font-heading);
+    font-size: 1rem;
+    font-weight: 700;
+    color: var(--color-text-primary);
+    cursor: pointer;
+    margin: 0 0 0.5rem 0;
+    transition: opacity 0.2s;
+    text-align: center;
+  }
+
+  .peg-title:hover {
+    opacity: 0.6;
+  }
+
   .peg-canvas {
     display: block;
     outline: none;
@@ -104,33 +119,28 @@
   .peg-controls {
     display: flex;
     align-items: center;
+    justify-content: center;
     gap: 0.75rem;
     margin-top: 0.5rem;
-    opacity: var(--peg-controls-opacity, 0.3);
-    transition: opacity 0.3s;
-  }
-
-  .peg-controls:hover,
-  .peg-controls:focus-within {
-    opacity: var(--peg-controls-hover-opacity, 0.7);
+    width: 100%;
+    opacity: var(--peg-controls-opacity, 0.45);
   }
 
   .peg-mode-bar {
     display: flex;
-    gap: 1px;
     border: 1px solid var(--peg-border-color, #3a3020);
     border-radius: 4px;
     overflow: hidden;
   }
 
   .peg-btn {
-    font-family: var(--font-mono);
-    font-size: 0.6rem;
+    font-family: var(--controls-font);
+    font-size: var(--controls-font-size);
     color: var(--peg-border-color, #3a3020);
     background: transparent;
     border: none;
     border-right: 1px solid var(--peg-border-color, #3a3020);
-    padding: 3px 8px;
+    padding: 4px 12px;
     cursor: pointer;
     line-height: 1;
     transition: background 0.15s, color 0.15s;
@@ -146,8 +156,8 @@
   }
 
   .peg-move-counter {
-    font-family: var(--font-mono);
-    font-size: 0.55rem;
+    font-family: var(--controls-font);
+    font-size: var(--controls-font-size);
     color: var(--peg-border-color, #3a3020);
     line-height: 1;
   }
@@ -253,8 +263,8 @@
   }
 
   .peg-soldiers-value {
-    font-family: var(--font-mono);
-    font-size: 0.55rem;
+    font-family: var(--controls-font);
+    font-size: var(--controls-font-size);
     color: var(--peg-border-color, #3a3020);
     line-height: 1;
   }
@@ -304,6 +314,7 @@
     spawnConfetti,
     stepConfetti,
   } from '../../lib/lights-out';
+  import { launchConfettiOverlay } from '../../lib/confetti-overlay';
 
   interface Tokens {
     cellSize: number;
@@ -492,45 +503,6 @@
         }
       }
 
-      // Confetti
-      for (const p of this.confetti) {
-        if (p.life <= 0) continue;
-        ctx.save();
-        ctx.globalAlpha = Math.max(0, p.life);
-        ctx.translate(p.x, p.y);
-        ctx.rotate(p.angle);
-        ctx.fillStyle = p.color;
-        ctx.fillRect(-p.w / 2, -p.h / 2, p.w, p.h);
-        ctx.restore();
-      }
-
-      // Win pill
-      if (state.solved && this.winShown) {
-        ctx.save();
-        const label = 'solved!';
-        ctx.font = `bold 1.2rem ${monoFont}`;
-        const textW = ctx.measureText(label).width;
-        const pillPadX = 12;
-        const pillPadY = 5;
-        const pillW = textW + pillPadX * 2;
-        const pillH = 18 + pillPadY * 2;
-        const pillX = w / 2 - pillW / 2;
-        const pillY = h - this.padding - pillH + 2;
-
-        ctx.globalAlpha = 0.75;
-        ctx.fillStyle = tokens.selectedColor;
-        ctx.beginPath();
-        ctx.roundRect(pillX, pillY, pillW, pillH, pillH / 2);
-        ctx.fill();
-
-        ctx.globalAlpha = 1;
-        ctx.fillStyle = '#f0e8d8';
-        ctx.textAlign = 'center';
-        ctx.textBaseline = 'middle';
-        ctx.fillText(label, w / 2, pillY + pillH / 2);
-        ctx.restore();
-      }
-
       // Stuck pill
       if (this.stuckShown && !state.solved) {
         ctx.save();
@@ -651,16 +623,15 @@
 
       if (this.state.solved && !this.winShown) {
         this.winShown = true;
-        const { cellSize } = this.tokens;
-        const cx = BOARD_SIZE * cellSize / 2 + this.padding;
-        const cy = BOARD_SIZE * cellSize / 2 + this.padding;
-        this.confetti = spawnConfetti(
-          cx, cy,
+        const rect = this.canvas.getBoundingClientRect();
+        launchConfettiOverlay(
+          rect.left + rect.width / 2,
+          rect.top + rect.height / 2,
           this.tokens.confettiCount,
           this.tokens.confettiSpread,
+          this.tokens.confettiGravity,
           ['#c47a2a', '#e8b85a', '#f0d88a', '#3a3020', '#5a4a30'],
         );
-        this.startAnimating();
       }
 
       if (isStuck(this.state)) {
@@ -1049,7 +1020,7 @@
     document.body.style.overflow = '';
   }
 
-  document.getElementById('peg-help')?.addEventListener('click', openOverlay);
+  document.getElementById('peg-title')?.addEventListener('click', openOverlay);
   document.getElementById('peg-overlay-close')?.addEventListener('click', closeOverlay);
 
   dialog?.addEventListener('click', (e) => {

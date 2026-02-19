@@ -26,7 +26,7 @@ import PegSolitaire from '../components/interactive/PegSolitaire.astro';
   </section>
 
   <section class="puzzle-drawer">
-    <h2 class="puzzle-drawer-title">Some puzzles I think are cool</h2>
+    <h2 class="puzzle-drawer-title">Some puzzles I think are cool <span class="puzzle-drawer-hint">(click the titles to learn more)</span></h2>
     <div class="puzzle-drawer-row">
       <div class="puzzle-slot">
         <LightsOut />
@@ -67,6 +67,10 @@ import PegSolitaire from '../components/interactive/PegSolitaire.astro';
     font-weight: 700;
     color: var(--color-text-primary);
     margin-bottom: 2rem;
+  }
+
+  .puzzle-drawer-hint {
+    opacity: 0.45;
   }
 
   .puzzle-drawer-row {

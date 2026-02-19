@@ -22,6 +22,9 @@ Single source of truth for all visual values. Update `src/styles/tokens.css` whe
 | Heading font | `--font-heading` | `Playfair Display` | Google Fonts, self-hosted woff2 |
 | Body font | `--font-body` | `Playfair Display` | Same family for now |
 | Mono font | `--font-mono` | `JetBrains Mono` | Code/technical text |
+| Controls font | `--controls-font` | `var(--font-body)` | Shared font for all interactive controls (puzzles + vector field) |
+| Controls font size | `--controls-font-size` | `0.75rem` | Button labels |
+| Controls font size (sm) | `--controls-font-size-sm` | `0.7rem` | Counters, labels, dropdowns |
 
 ## Glassmorphic Bento Boxes
 
@@ -93,8 +96,9 @@ Interactive vector field in the right margin. An organic blob of small arrows wi
 
 | Token | CSS Variable | Value | Notes |
 |---|---|---|---|
-| Dashboard opacity | `--vf-dashboard-opacity` | `0.3` | Resting opacity of the control dashboard |
-| Dashboard hover opacity | `--vf-dashboard-hover-opacity` | `0.7` | Opacity when hovering or focusing the dashboard |
+| Dashboard opacity | `--vf-dashboard-opacity` | `0.45` | Fixed opacity of the control dashboard (no hover transition) |
+| Dropdown background | `--vf-dropdown-bg` | `#a8b29a` | Field selector dropdown menu background |
+| Dropdown divider | `--vf-dropdown-divider` | `rgba(58, 48, 32, 0.15)` | Border between dropdown menu items |
 
 ### Vector Field — Wind Transition
 
@@ -125,7 +129,7 @@ Draggable about-me photos scattered organically below the vector field in the ri
 | Token | CSS Variable | Value | Notes |
 |---|---|---|---|
 | Background | `--content-card-bg` | `transparent` | No visible fill; tiles fade seamlessly into content area |
-| Blur | `--content-card-blur` | `8px` | Backdrop blur for text readability over tiled background |
+| Blur | `--content-card-blur` | `0px` | Disabled — tile alpha fade handles the transition; blur caused artifacts on falling objects |
 | Border | `--content-card-border` | `transparent` | No visible borders; tile alpha fade handles transition |
 
 ## Monotile
@@ -145,6 +149,15 @@ Draggable about-me photos scattered organically below the vector field in the ri
 | Ripple speed | `--tile-ripple-speed` | `1200` | Wavefront expansion speed in px/s |
 | Ripple fade | `--tile-ripple-fade` | `0.25` | Per-tile fade duration after wavefront passes (seconds) |
 | Ripple radius | `--tile-ripple-radius` | `600` | Maximum reach of the ripple in screen px |
+
+### Footer Tiling Zone
+
+The bottom of the page features monotiles rising organically from below the content card. The boundary is a parabolic curve — tiles appear higher at the viewport edges and lower in the center, creating a bowl-shaped footer rather than a flat horizontal line.
+
+| Token | CSS Variable | Value | Notes |
+|---|---|---|---|
+| Footer rise | `--tile-footer-rise` | `200` | How many px higher tiles appear at the viewport edges vs center (parabolic curve) |
+| Footer fade | `--tile-footer-fade` | `100` | Fade distance in px for tile visibility at the footer boundary |
 
 ## Galton Board
 
@@ -217,8 +230,7 @@ Interactive Lights Out game embedded in the content card. An organic ~5×5 grid 
 
 | Token | CSS Variable | Value | Notes |
 |---|---|---|---|
-| Controls opacity | `--lo-controls-opacity` | `0.3` | Resting opacity (matches toy controls) |
-| Controls hover opacity | `--lo-controls-hover-opacity` | `0.7` | Hover/focus opacity |
+| Controls opacity | `--lo-controls-opacity` | `0.45` | Fixed opacity of control buttons (no hover transition) |
 
 ### Confetti
 
@@ -283,8 +295,7 @@ Classic cross-shaped board from Louis XIV's court (1697). Jump pegs over each ot
 
 | Token | CSS Variable | Value | Notes |
 |---|---|---|---|
-| Controls opacity | `--peg-controls-opacity` | `0.3` | Resting opacity (matches toy controls) |
-| Controls hover opacity | `--peg-controls-hover-opacity` | `0.7` | Hover/focus opacity |
+| Controls opacity | `--peg-controls-opacity` | `0.45` | Fixed opacity of control buttons (no hover transition) |
 | Border color | `--peg-border-color` | `#3a3020` | Button border color |
 
 ### Overlay
@@ -331,8 +342,7 @@ Sam Loyd's 1898 puzzle designed specifically to defeat Euler's method for solvin
 
 | Token | CSS Variable | Value | Notes |
 |---|---|---|---|
-| Controls opacity | `--bfk-controls-opacity` | `0.3` | Resting opacity (matches toy controls) |
-| Controls hover opacity | `--bfk-controls-hover-opacity` | `0.7` | Hover/focus opacity |
+| Controls opacity | `--bfk-controls-opacity` | `0.45` | Fixed opacity of control buttons (no hover transition) |
 | Border color | `--bfk-border-color` | `#3a3020` | Button border color |
 
 ### Overlay

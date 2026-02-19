@@ -4,33 +4,38 @@
   <canvas id="vector-field-canvas" class="vector-field-canvas"></canvas>
 
   <div class="vf-dashboard">
-    <div class="vf-mode-bar" role="radiogroup" aria-label="Interaction mode">
-      <button class="vf-mode-opt" data-mode="push">push</button>
-      <button class="vf-mode-opt" data-mode="combing">flow</button>
-      <button class="vf-mode-opt" data-mode="radial">radial</button>
-      <button class="vf-mode-opt active" data-mode="trace">trace</button>
+    <div class="vf-controls-row">
+      <div class="vf-mode-bar" role="radiogroup" aria-label="Interaction mode">
+        <button class="vf-mode-opt" data-mode="push">push</button>
+        <button class="vf-mode-opt" data-mode="combing">flow</button>
+        <button class="vf-mode-opt" data-mode="radial">radial</button>
+      </div>
+      <button class="vf-drop-btn vf-mode-opt active" data-mode="trace">drop ball</button>
     </div>
 
-    <div class="vf-field-select">
-      <label class="vf-label" for="vf-fn-select">field</label>
-      <select id="vf-fn-select" class="vf-select"></select>
+    <div class="vf-field-dropdown" id="vf-field-dropdown">
+      <button class="vf-field-trigger" id="vf-field-trigger" type="button">
+        <span class="vf-field-value" id="vf-field-value"></span>
+        <span class="vf-field-arrow">&#9662;</span>
+      </button>
+      <div class="vf-field-menu" id="vf-field-menu" hidden></div>
     </div>
 
-    <div class="vf-custom-input" id="vf-custom-wrap" hidden>
-      <label class="vf-label" for="vf-custom-fn">f(x, y) =</label>
+    <div class="vf-custom-section">
       <div class="vf-input-row">
+        <label class="vf-custom-label" for="vf-custom-fn">f(x,y) =</label>
         <input
           type="text"
           id="vf-custom-fn"
           class="vf-input"
-          placeholder="sin(x*0.05) * cos(y*0.03)"
+          placeholder="y, -x  or  sin(x*0.05)"
           spellcheck="false"
           autocomplete="off"
         />
         <button id="vf-custom-apply" class="vf-apply-btn">go</button>
       </div>
       <div class="vf-error" id="vf-error" hidden></div>
-      <div class="vf-help">vars: x, y, r, theta, pi, e</div>
+      <div class="vf-help">Fx,Fy (e.g. y,-x) or angle · vars: x, y, r, theta, pi, e</div>
     </div>
   </div>
 </div>
@@ -139,8 +144,10 @@
     private cellHash: Map<string, number[]> = new Map();
 
     // Dashboard elements
-    private selectEl!: HTMLSelectElement;
-    private customWrap!: HTMLElement;
+    private fieldTrigger!: HTMLButtonElement;
+    private fieldValue!: HTMLElement;
+    private fieldMenu!: HTMLElement;
+    private fieldMenuItems: HTMLButtonElement[] = [];
     private customInput!: HTMLInputElement;
     private customApply!: HTMLButtonElement;
     private errorEl!: HTMLElement;
@@ -151,8 +158,9 @@
       this.ctx = canvas.getContext('2d')!;
       this.container = canvas.parentElement!;
       this.modeButtons = this.container.querySelectorAll<HTMLButtonElement>('.vf-mode-opt');
-      this.selectEl = this.container.querySelector<HTMLSelectElement>('#vf-fn-select')!;
-      this.customWrap = this.container.querySelector<HTMLElement>('#vf-custom-wrap')!;
+      this.fieldTrigger = this.container.querySelector<HTMLButtonElement>('#vf-field-trigger')!;
+      this.fieldValue = this.container.querySelector<HTMLElement>('#vf-field-value')!;
+      this.fieldMenu = this.container.querySelector<HTMLElement>('#vf-field-menu')!;
       this.customInput = this.container.querySelector<HTMLInputElement>('#vf-custom-fn')!;
       this.customApply = this.container.querySelector<HTMLButtonElement>('#vf-custom-apply')!;
       this.errorEl = this.container.querySelector<HTMLElement>('#vf-error')!;
@@ -160,7 +168,7 @@
       this.readTokens();
       this.buildCursorStates();
       this.canvas.style.cursor = this.cursorNormal;
-      this.populateDropdown();
+      this.populateFieldMenu();
       this.createOverlay();
       this.init();
     }
@@ -207,24 +215,21 @@
       this.leafMaxCount = num('--vf-leaf-max-count', this.leafMaxCount);
     }
 
-    private populateDropdown(): void {
+    private populateFieldMenu(): void {
       // Pick a random initial preset
       const initial = randomPreset();
       this.currentPresetId = initial.id;
+      this.fieldValue.textContent = initial.label;
 
       for (const preset of FIELD_PRESETS) {
-        const opt = document.createElement('option');
-        opt.value = preset.id;
-        opt.textContent = `${preset.label}: ${preset.expression}`;
-        if (preset.id === initial.id) opt.selected = true;
-        this.selectEl.appendChild(opt);
+        const item = document.createElement('button');
+        item.className = 'vf-field-item';
+        item.dataset.fieldId = preset.id;
+        item.textContent = preset.label;
+        if (preset.id === initial.id) item.classList.add('active');
+        this.fieldMenu.appendChild(item);
+        this.fieldMenuItems.push(item);
       }
-
-      // Add custom option
-      const customOpt = document.createElement('option');
-      customOpt.value = 'custom';
-      customOpt.textContent = 'custom...';
-      this.selectEl.appendChild(customOpt);
     }
 
     /** Build native CSS cursor URIs at three scales for click animation. */
@@ -352,8 +357,25 @@
         btn.addEventListener('click', () => this.onModeSelect(btn.dataset.mode as InteractionMode));
       });
 
-      // Dropdown: field function selection
-      this.selectEl.addEventListener('change', () => this.onFieldSelect());
+      // Custom dropdown: toggle menu on trigger click
+      this.fieldTrigger.addEventListener('click', () => {
+        const open = !this.fieldMenu.hidden;
+        this.fieldMenu.hidden = open;
+        this.fieldTrigger.classList.toggle('open', !open);
+      });
+
+      // Close dropdown when clicking outside
+      document.addEventListener('click', (e) => {
+        if (!this.fieldMenu.hidden && !this.container.querySelector('#vf-field-dropdown')!.contains(e.target as Node)) {
+          this.fieldMenu.hidden = true;
+          this.fieldTrigger.classList.remove('open');
+        }
+      });
+
+      // Field menu items
+      this.fieldMenuItems.forEach((item) => {
+        item.addEventListener('click', () => this.onFieldSelect(item.dataset.fieldId!));
+      });
 
       // Custom input: apply on Enter or button click
       this.customInput.addEventListener('keydown', (e) => {
@@ -373,23 +395,40 @@
 
     // ─── Field selection ────────────────────────────────────
 
-    private onFieldSelect(): void {
-      const value = this.selectEl.value;
-
-      if (value === 'custom') {
-        this.customWrap.hidden = false;
-        this.customInput.focus();
-        return;
-      }
-
-      this.customWrap.hidden = true;
-      this.errorEl.hidden = true;
-
-      const preset = FIELD_PRESETS.find((p) => p.id === value);
+    private onFieldSelect(fieldId: string): void {
+      const preset = FIELD_PRESETS.find((p) => p.id === fieldId);
       if (!preset || preset.id === this.currentPresetId) return;
 
       this.currentPresetId = preset.id;
+      this.errorEl.hidden = true;
+
+      // Update trigger text and active state
+      this.fieldValue.textContent = preset.label;
+      this.fieldMenuItems.forEach((item) => {
+        item.classList.toggle('active', item.dataset.fieldId === fieldId);
+      });
+
+      // Close menu
+      this.fieldMenu.hidden = true;
+      this.fieldTrigger.classList.remove('open');
+
       this.startFieldTransition(preset.fn);
+    }
+
+    /**
+     * Find a comma at paren-depth 0, splitting "Fx, Fy" into two parts.
+     * Returns null if no top-level comma exists (single-expression / angle mode).
+     */
+    private splitTopLevelComma(input: string): [string, string] | null {
+      let depth = 0;
+      for (let i = 0; i < input.length; i++) {
+        if (input[i] === '(') depth++;
+        else if (input[i] === ')') depth--;
+        else if (input[i] === ',' && depth === 0) {
+          return [input.slice(0, i).trim(), input.slice(i + 1).trim()];
+        }
+      }
+      return null;
     }
 
     private onCustomApply(): void {
@@ -397,27 +436,54 @@
       if (!input) return;
 
       try {
-        const ast = parseExpression(input);
-        const compiled = compileExpression(ast);
+        let customFn: (pos: Vec2, center: Vec2) => number;
+        const parts = this.splitTopLevelComma(input);
 
-        // Build a field function from the compiled expression
-        const customFn = (pos: Vec2, center: Vec2): number => {
-          const dx = pos.x - center.x;
-          const dy = pos.y - center.y;
-          const result = compiled({
-            x: dx, y: dy,
-            r: Math.sqrt(dx * dx + dy * dy),
-            theta: Math.atan2(dy, dx),
-            pi: Math.PI, e: Math.E,
-          });
-          return isFinite(result) ? result : 0;
-        };
+        if (parts) {
+          // Two-component mode: "Fx, Fy" → atan2(Fy, Fx)
+          const astX = parseExpression(parts[0]);
+          const astY = parseExpression(parts[1]);
+          const compiledX = compileExpression(astX);
+          const compiledY = compileExpression(astY);
+
+          customFn = (pos: Vec2, center: Vec2): number => {
+            const dx = pos.x - center.x;
+            const dy = pos.y - center.y;
+            const vars = {
+              x: dx, y: dy,
+              r: Math.sqrt(dx * dx + dy * dy),
+              theta: Math.atan2(dy, dx),
+              pi: Math.PI, e: Math.E,
+            };
+            const fx = compiledX(vars);
+            const fy = compiledY(vars);
+            return isFinite(fx) && isFinite(fy) ? Math.atan2(fy, fx) : 0;
+          };
+        } else {
+          // Single-expression mode: result is used directly as angle (radians)
+          const ast = parseExpression(input);
+          const compiled = compileExpression(ast);
+
+          customFn = (pos: Vec2, center: Vec2): number => {
+            const dx = pos.x - center.x;
+            const dy = pos.y - center.y;
+            const result = compiled({
+              x: dx, y: dy,
+              r: Math.sqrt(dx * dx + dy * dy),
+              theta: Math.atan2(dy, dx),
+              pi: Math.PI, e: Math.E,
+            });
+            return isFinite(result) ? result : 0;
+          };
+        }
 
         // Test the function on a sample point before committing
         customFn({ x: 100, y: 100 }, { x: 0, y: 0 });
 
         this.errorEl.hidden = true;
         this.currentPresetId = 'custom';
+        this.fieldValue.textContent = 'Custom';
+        this.fieldMenuItems.forEach((item) => item.classList.remove('active'));
         this.startFieldTransition(customFn);
       } catch (err) {
         this.errorEl.textContent = err instanceof ParseError
@@ -918,43 +984,47 @@
     display: flex;
     flex-direction: column;
     align-items: stretch;
-    gap: 0.4rem;
+    gap: 0.5rem;
     margin-top: 0.75rem;
-    max-width: 280px;
+    max-width: 300px;
     width: 100%;
-    opacity: var(--vf-dashboard-opacity, 0.3);
-    transition: opacity 0.3s;
+    /* No opacity here — it creates a stacking context that traps
+       the dropdown menu below sibling elements like photo scatter.
+       Opacity is applied to individual children instead. */
   }
 
-  .vf-dashboard:hover,
-  .vf-dashboard:focus-within {
-    opacity: var(--vf-dashboard-hover-opacity, 0.7);
+  /* ─── Controls row (mode bar + drop button) ────────── */
+
+  .vf-controls-row {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    opacity: var(--vf-dashboard-opacity, 0.45);
   }
 
   /* ─── Mode bar ──────────────────────────────────────── */
 
   .vf-mode-bar {
     display: flex;
-    gap: 1px;
     border: 1px solid var(--vf-arrow-color);
     border-radius: 4px;
     overflow: hidden;
   }
 
   .vf-mode-opt {
-    font-family: var(--font-mono);
-    font-size: 0.6rem;
+    font-family: var(--controls-font);
+    font-size: var(--controls-font-size);
     color: var(--vf-arrow-color);
     background: transparent;
     border: none;
     border-right: 1px solid var(--vf-arrow-color);
-    padding: 3px 8px;
+    padding: 4px 12px;
     cursor: pointer;
     line-height: 1;
     transition: background 0.15s, color 0.15s;
   }
 
-  .vf-mode-opt:last-child {
+  .vf-mode-bar .vf-mode-opt:last-child {
     border-right: none;
   }
 
@@ -963,64 +1033,138 @@
     color: var(--color-bg-light);
   }
 
-  /* ─── Field selector ────────────────────────────────── */
+  /* ─── Drop button (standalone) ─────────────────────── */
 
-  .vf-label {
-    font-family: var(--font-mono);
-    font-size: 0.5rem;
-    color: var(--vf-arrow-color);
-    text-transform: lowercase;
-    letter-spacing: 0.05em;
-    margin-bottom: 2px;
-    display: block;
-  }
-
-  .vf-field-select {
-    display: flex;
-    flex-direction: column;
-  }
-
-  .vf-select {
-    font-family: var(--font-mono);
-    font-size: 0.55rem;
-    color: var(--vf-arrow-color);
-    background: transparent;
+  .vf-drop-btn {
     border: 1px solid var(--vf-arrow-color);
     border-radius: 4px;
-    padding: 3px 6px;
-    cursor: pointer;
+    flex-shrink: 0;
   }
 
-  .vf-select:focus {
-    outline: 1px solid var(--vf-arrow-color);
-    outline-offset: 1px;
+  /* ─── Field dropdown ───────────────────────────────── */
+
+  .vf-field-dropdown {
+    position: relative;
+    z-index: 100;
+  }
+
+  .vf-field-trigger {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    width: 100%;
+    font-family: var(--controls-font);
+    font-size: var(--controls-font-size-sm);
+    color: rgba(58, 48, 32, 0.45);
+    background: transparent;
+    border: 1px solid rgba(58, 48, 32, 0.45);
+    border-radius: 4px;
+    padding: 4px 8px;
+    cursor: pointer;
+    line-height: 1;
+    transition: background 0.15s, color 0.15s;
+  }
+
+  .vf-field-trigger:hover {
+    background: rgba(58, 48, 32, 0.08);
+  }
+
+  .vf-field-trigger.open {
+    border-radius: 4px 4px 0 0;
+  }
+
+  .vf-field-value {
+    flex: 1;
+  }
+
+  .vf-field-arrow {
+    font-size: 0.55rem;
+    opacity: 0.5;
+    transition: transform 0.15s;
+  }
+
+  .vf-field-trigger.open .vf-field-arrow {
+    transform: rotate(180deg);
+  }
+
+  .vf-field-menu {
+    position: absolute;
+    top: 100%;
+    left: 0;
+    right: 0;
+    border: 1px solid var(--vf-arrow-color);
+    border-top: none;
+    border-radius: 0 0 4px 4px;
+    background: var(--vf-dropdown-bg);
+    z-index: 100;
+  }
+
+  .vf-field-menu[hidden] {
+    display: none;
+  }
+
+  /* :global() needed because these buttons are created dynamically
+     via document.createElement and lack Astro's scoping attribute.
+     Scoped under .vf-field-menu to avoid leaking. */
+  .vf-field-menu :global(.vf-field-item) {
+    display: block;
+    width: 100%;
+    font-family: var(--controls-font);
+    font-size: var(--controls-font-size-sm);
+    color: var(--vf-arrow-color);
+    background: transparent;
+    border: none;
+    border-bottom: 1px solid var(--vf-dropdown-divider);
+    padding: 5px 8px;
+    cursor: pointer;
+    line-height: 1;
+    text-align: left;
+    transition: background 0.1s;
+  }
+
+  .vf-field-menu :global(.vf-field-item:last-child) {
+    border-bottom: none;
+  }
+
+  .vf-field-menu :global(.vf-field-item.active) {
+    background: rgba(58, 48, 32, 0.35);
+    color: var(--vf-arrow-color);
+  }
+
+  .vf-field-menu :global(.vf-field-item:hover:not(.active)) {
+    background: rgba(58, 48, 32, 0.1);
   }
 
   /* ─── Custom input ──────────────────────────────────── */
 
-  .vf-custom-input {
+  .vf-custom-section {
     display: flex;
     flex-direction: column;
     gap: 3px;
-  }
-
-  .vf-custom-input[hidden] {
-    display: none;
+    opacity: var(--vf-dashboard-opacity, 0.45);
   }
 
   .vf-input-row {
     display: flex;
+    align-items: center;
     gap: 4px;
+  }
+
+  .vf-custom-label {
+    font-family: var(--font-mono);
+    font-size: var(--controls-font-size-sm);
+    color: var(--vf-arrow-color);
+    white-space: nowrap;
   }
 
   .vf-input {
     font-family: var(--font-mono);
-    font-size: 0.55rem;
+    font-size: var(--controls-font-size-sm);
     color: var(--vf-arrow-color);
     background: transparent;
     border: 1px solid var(--vf-arrow-color);
     border-radius: 4px;
-    padding: 3px 6px;
+    padding: 4px 8px;
     flex: 1;
     min-width: 0;
   }
@@ -1031,13 +1175,13 @@
   }
 
   .vf-apply-btn {
-    font-family: var(--font-mono);
-    font-size: 0.5rem;
+    font-family: var(--controls-font);
+    font-size: var(--controls-font-size-sm);
     color: var(--vf-arrow-color);
     background: transparent;
     border: 1px solid var(--vf-arrow-color);
     border-radius: 4px;
-    padding: 2px 10px;
+    padding: 4px 12px;
     cursor: pointer;
     transition: background 0.15s, color 0.15s;
     white-space: nowrap;
@@ -1050,7 +1194,7 @@
 
   .vf-error {
     font-family: var(--font-mono);
-    font-size: 0.45rem;
+    font-size: 0.65rem;
     color: #8b3030;
     padding: 2px 0;
   }
@@ -1061,8 +1205,8 @@
 
   .vf-help {
     font-family: var(--font-mono);
-    font-size: 0.4rem;
+    font-size: var(--controls-font-size-sm);
     color: var(--vf-arrow-color);
-    opacity: 0.6;
+    opacity: 0.8;
   }
 </style>

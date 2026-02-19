@@ -2,7 +2,7 @@
   display: grid;
   grid-template-columns: var(--margin-left) minmax(0, var(--content-max-width)) 1fr;
   min-height: 100vh;
-  padding-bottom: var(--margin-left);
+  padding-bottom: calc(var(--margin-left) + 16rem);
   position: relative;
   z-index: 1;
 }

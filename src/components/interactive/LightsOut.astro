@@ -7,13 +7,13 @@
 ---
 
 <div class="lo-container">
+  <h3 class="lo-title" id="lo-title">Lights Out</h3>
   <canvas id="lo-canvas" class="lo-canvas"></canvas>
 
   <div class="lo-controls">
     <div class="lo-mode-bar">
       <button class="lo-btn" id="lo-new-puzzle">new puzzle</button>
       <button class="lo-btn" id="lo-hint">hint</button>
-      <button class="lo-btn" id="lo-help">?</button>
     </div>
     <span class="lo-move-counter" id="lo-moves">moves: 0</span>
   </div>
@@ -138,6 +138,7 @@
     type ConfettiParticle,
     type Graph3DState,
   } from '../../lib/lights-out';
+  import { launchConfettiOverlay } from '../../lib/confetti-overlay';
 
   // ═══════════════════════════════════════════════════════════
   //  TOKEN READER
@@ -302,14 +303,13 @@
 
       if (this.state.solved && !this.winShown) {
         this.winShown = true;
-        // Compute center of grid for confetti origin
-        const dim = gridDimensions(this.state);
-        const cx = parseFloat(this.canvas.style.width) / 2;
-        const cy = parseFloat(this.canvas.style.height) / 2;
-        this.confetti = spawnConfetti(
-          cx, cy,
+        const rect = this.canvas.getBoundingClientRect();
+        launchConfettiOverlay(
+          rect.left + rect.width / 2,
+          rect.top + rect.height / 2,
           this.tokens.confettiCount,
           this.tokens.confettiSpread,
+          this.tokens.confettiGravity,
           CONFETTI_COLORS,
         );
       }
@@ -435,28 +435,6 @@
         }
       }
 
-      // Confetti
-      for (const p of this.confetti) {
-        if (p.life <= 0) continue;
-        ctx.save();
-        ctx.globalAlpha = Math.max(0, p.life);
-        ctx.translate(p.x, p.y);
-        ctx.rotate(p.angle);
-        ctx.fillStyle = p.color;
-        ctx.fillRect(-p.w / 2, -p.h / 2, p.w, p.h);
-        ctx.restore();
-      }
-
-      // Win text
-      if (this.state.solved && this.winShown) {
-        ctx.save();
-        ctx.font = `700 1rem ${getComputedStyle(document.documentElement).getPropertyValue('--font-mono').trim() || 'monospace'}`;
-        ctx.fillStyle = this.tokens.colorOn;
-        ctx.textAlign = 'center';
-        ctx.globalAlpha = 0.8;
-        ctx.fillText('solved!', w / 2, h - 4);
-        ctx.restore();
-      }
     }
 
     private roundRect(
@@ -581,7 +559,8 @@
             this.updateMoveCounter();
             if (this.state.solved && !this.winShown) {
               this.winShown = true;
-              this.confetti = spawnConfetti(160, 160, 40, 200, CONFETTI_COLORS);
+              const rect = this.canvas.getBoundingClientRect();
+              launchConfettiOverlay(rect.left + rect.width / 2, rect.top + rect.height / 2, 40, 200, 400, CONFETTI_COLORS);
             }
           }
         }
@@ -710,28 +689,6 @@
         }
       }
 
-      // Confetti
-      for (const p of this.confetti) {
-        if (p.life <= 0) continue;
-        ctx.save();
-        ctx.globalAlpha = Math.max(0, p.life);
-        ctx.translate(p.x, p.y);
-        ctx.rotate(p.angle);
-        ctx.fillStyle = p.color;
-        ctx.fillRect(-p.w / 2, -p.h / 2, p.w, p.h);
-        ctx.restore();
-      }
-
-      // Win text
-      if (this.state.solved && this.winShown) {
-        ctx.save();
-        ctx.font = `700 0.8rem ${getComputedStyle(document.documentElement).getPropertyValue('--font-mono').trim() || 'monospace'}`;
-        ctx.fillStyle = this.tokens.nodeOn;
-        ctx.textAlign = 'center';
-        ctx.globalAlpha = 0.8;
-        ctx.fillText('solved!', cx, size - 8);
-        ctx.restore();
-      }
     }
   }
 
@@ -830,9 +787,8 @@
 
       if (this.state.solved && !this.winShown) {
         this.winShown = true;
-        const cw = parseFloat(this.canvas.style.width);
-        const ch = parseFloat(this.canvas.style.height);
-        this.confetti = spawnConfetti(cw / 2, ch / 2, 40, 200, CONFETTI_COLORS);
+        const rect = this.canvas.getBoundingClientRect();
+        launchConfettiOverlay(rect.left + rect.width / 2, rect.top + rect.height / 2, 40, 200, 400, CONFETTI_COLORS);
         this.startAnimation();
       }
 
@@ -930,28 +886,6 @@
         }
       }
 
-      // Confetti
-      for (const p of this.confetti) {
-        if (p.life <= 0) continue;
-        ctx.save();
-        ctx.globalAlpha = Math.max(0, p.life);
-        ctx.translate(p.x, p.y);
-        ctx.rotate(p.angle);
-        ctx.fillStyle = p.color;
-        ctx.fillRect(-p.w / 2, -p.h / 2, p.w, p.h);
-        ctx.restore();
-      }
-
-      // Win text
-      if (this.state.solved && this.winShown) {
-        ctx.save();
-        ctx.font = `700 0.8rem ${fontMono}`;
-        ctx.fillStyle = this.tokens.colorOn;
-        ctx.textAlign = 'center';
-        ctx.globalAlpha = 0.8;
-        ctx.fillText('solved!', w / 2, h - 4);
-        ctx.restore();
-      }
     }
   }
 
@@ -1035,7 +969,7 @@
       document.body.style.overflow = '';
     }
 
-    document.getElementById('lo-help')?.addEventListener('click', openOverlay);
+    document.getElementById('lo-title')?.addEventListener('click', openOverlay);
     document.getElementById('lo-overlay-close')?.addEventListener('click', closeOverlay);
 
     // Close on backdrop click
@@ -1086,6 +1020,21 @@
     margin-top: 2rem;
   }
 
+  .lo-title {
+    font-family: var(--font-heading);
+    font-size: 1rem;
+    font-weight: 700;
+    color: var(--color-text-primary);
+    cursor: pointer;
+    margin: 0 0 0.5rem 0;
+    transition: opacity 0.2s;
+    text-align: center;
+  }
+
+  .lo-title:hover {
+    opacity: 0.6;
+  }
+
   .lo-canvas {
     display: block;
     cursor: pointer;
@@ -1096,33 +1045,28 @@
   .lo-controls {
     display: flex;
     align-items: center;
+    justify-content: center;
     gap: 0.75rem;
     margin-top: 0.5rem;
-    opacity: var(--lo-controls-opacity, 0.3);
-    transition: opacity 0.3s;
-  }
-
-  .lo-controls:hover,
-  .lo-controls:focus-within {
-    opacity: var(--lo-controls-hover-opacity, 0.7);
+    width: 100%;
+    opacity: var(--lo-controls-opacity, 0.45);
   }
 
   .lo-mode-bar {
     display: flex;
-    gap: 1px;
     border: 1px solid var(--lo-border-color, #3a3020);
     border-radius: 4px;
     overflow: hidden;
   }
 
   .lo-btn {
-    font-family: var(--font-mono);
-    font-size: 0.6rem;
+    font-family: var(--controls-font);
+    font-size: var(--controls-font-size);
     color: var(--lo-border-color, #3a3020);
     background: transparent;
     border: none;
     border-right: 1px solid var(--lo-border-color, #3a3020);
-    padding: 3px 8px;
+    padding: 4px 12px;
     cursor: pointer;
     line-height: 1;
     transition: background 0.15s, color 0.15s;
@@ -1139,8 +1083,8 @@
   }
 
   .lo-move-counter {
-    font-family: var(--font-mono);
-    font-size: 0.55rem;
+    font-family: var(--controls-font);
+    font-size: var(--controls-font-size);
     color: var(--lo-border-color, #3a3020);
     line-height: 1;
   }
