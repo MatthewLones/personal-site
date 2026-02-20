@@ -176,7 +176,7 @@ Inverted particle accumulator centered at the viewport horizontal center. Each m
 | Particle opacity | `--galton-particle-opacity` | `0.6` | Semi-transparent particles |
 | Arc duration | `--galton-arc-duration` | `0.12` | Time per peg-to-peg arc segment (seconds) |
 | Arc height | `--galton-arc-height` | `8` | Bezier control point offset for upward bulge (px) |
-| Board top margin | `--galton-board-top-margin` | `3` | Space between top of viewport and ceiling boundary (px) |
+| Board top margin | `--galton-board-top-margin` | `0` | Space between top of viewport and ceiling boundary (px) |
 | Gravity | `--galton-gravity` | `800` | Upward acceleration in px/s² (inverted: pulls toward y=0) |
 | Damping | `--galton-damping` | `2.0` | Exponential velocity decay coefficient (1/s) |
 | Restitution | `--galton-restitution` | `0.3` | Coefficient of restitution for circle-circle collisions |

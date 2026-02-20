@@ -86,6 +86,14 @@
       document.addEventListener('tile-click', () => this.spawnParticle());
       window.addEventListener('resize', () => this.onResize());
 
+      // Keep layer fixed for overscroll anchoring, simulate scroll via transform
+      const layer = this.canvas.parentElement!;
+      const onScroll = () => {
+        layer.style.transform = `translateY(${-window.scrollY}px)`;
+      };
+      window.addEventListener('scroll', onScroll, { passive: true });
+      onScroll();
+
       // Initial render to show pegs
       this.scheduleRender();
       window.dispatchEvent(new CustomEvent('component-ready', { detail: { id: 'galton-board' } }));
@@ -642,7 +650,7 @@
 
 <style>
   .galton-layer {
-    position: absolute;
+    position: fixed;
     inset: 0;
     z-index: 3;
     pointer-events: none;

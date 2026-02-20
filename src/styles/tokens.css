@@ -149,7 +149,7 @@
   --galton-particle-opacity: 0.6;
   --galton-arc-duration: 0.12;
   --galton-arc-height: 8;
-  --galton-board-top-margin: 3;
+  --galton-board-top-margin: 0;
   --galton-gravity: 800;
   --galton-damping: 2.0;
   --galton-restitution: 0.3;

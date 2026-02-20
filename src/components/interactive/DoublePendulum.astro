@@ -131,6 +131,15 @@
       document.addEventListener('pointermove', (e) => this.onPointerMove(e));
       document.addEventListener('pointerup', (e) => this.onPointerUp(e));
       window.addEventListener('resize', () => this.onResize());
+
+      // Simulate scrolling on the fixed layer so the pendulum moves with
+      // page content, but stays anchored during overscroll (scrollY stays 0).
+      const layer = this.canvas.parentElement!;
+      const onScroll = () => {
+        layer.style.transform = `translateY(${-window.scrollY}px)`;
+      };
+      window.addEventListener('scroll', onScroll, { passive: true });
+      onScroll();
     }
 
     private onPointerDown(e: PointerEvent) {
@@ -359,7 +368,7 @@
 
 <style>
   .pendulum-layer {
-    position: absolute;
+    position: fixed;
     inset: 0;
     z-index: 3;
     pointer-events: none;

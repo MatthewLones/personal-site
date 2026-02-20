@@ -13,9 +13,16 @@ html {
   scroll-behavior: smooth;
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
-  background: var(--gradient-bg);
-  background-attachment: fixed;
+  background: var(--color-bg-dark);
   scrollbar-width: none;
+}
+
+html::before {
+  content: '';
+  position: fixed;
+  inset: 0;
+  z-index: -1;
+  background: var(--gradient-bg);
 }
 
 html::-webkit-scrollbar {
@@ -25,8 +32,6 @@ html::-webkit-scrollbar {
 body {
   font-family: var(--font-body);
   color: var(--color-text-primary);
-  background: var(--gradient-bg);
-  background-attachment: scroll;
   min-height: 100vh;
   line-height: 1.6;
 }
