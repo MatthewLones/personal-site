@@ -2,9 +2,25 @@
 ---
 <canvas id="hat-tiling-canvas" class="hat-tiling-bg"></canvas>
 <span id="tile-click-counter" class="tile-click-counter" aria-hidden="true"></span>
+<button id="dash-start-btn" class="dash-start-btn" aria-label="Start monotile dash">dash</button>
+<div id="dash-hud" class="dash-hud" aria-hidden="true"></div>
 
 <script>
   import { generateHatTiling, pointInPolygon, type HatTileResult } from '../../lib/hat-monotile';
+  import {
+    type DashState,
+    createDashState,
+    startCountdown,
+    startPlaying,
+    handleTileClick,
+    checkTimeout,
+    getTimeRemaining,
+    getTargetTileIndex,
+    getCountdownNumber,
+    isCountdownDone,
+  } from '../../lib/monotile-dash';
+  import { startSession, submitScore, fetchLeaderboard, formatTime } from '../../lib/game-timer';
+  import { showNameEntry } from '../../lib/puzzle-ui';
 
   // Parse hex color to [r, g, b]
   function hexToRgb(hex: string): [number, number, number] {
@@ -86,6 +102,13 @@
     private rippleFade = 0.3;
     private rippleRadius = 600;
 
+    // Monotile Dash game
+    private dashState: DashState = createDashState();
+    private dashSession: { token: string; startTime: number; running: boolean; game: string; hintUsed: boolean } | null = null;
+    private dashHudEl: HTMLElement | null = null;
+    private dashBtnEl: HTMLElement | null = null;
+    private dashAnimFrame: number | null = null;
+
     // Footer tiling zone (organic curved boundary)
     private footerRise = 200;        // px higher at edges vs center
     private footerFade = 100;        // px fade distance
@@ -135,6 +158,8 @@
       if (!isNaN(footerFade)) this.footerFade = footerFade;
 
       this.clickCounterEl = document.getElementById('tile-click-counter');
+      this.dashHudEl = document.getElementById('dash-hud');
+      this.dashBtnEl = document.getElementById('dash-start-btn');
       this.init();
     }
 
@@ -171,6 +196,114 @@
 
       this.scheduleRender();
       window.dispatchEvent(new CustomEvent('component-ready', { detail: { id: 'hat-tiling' } }));
+
+      // Dash game button
+      this.dashBtnEl?.addEventListener('click', () => this.startDash());
+    }
+
+    /** Compute list of tile indices currently visible on screen */
+    private getVisibleTileIndices(): number[] {
+      const visible: number[] = [];
+      for (let i = 0; i < this.tiles.length; i++) {
+        const sc = this.worldToScreen(this.tiles[i].centroid);
+        if (sc.x < 0 || sc.x > window.innerWidth || sc.y < 0 || sc.y > window.innerHeight) continue;
+        if (this.getTileAlpha(sc.x, sc.y) > 0.05) {
+          visible.push(i);
+        }
+      }
+      return visible;
+    }
+
+    private async startDash() {
+      const visible = this.getVisibleTileIndices();
+      if (visible.length < 5) return; // not enough visible tiles
+
+      // Start server session
+      this.dashSession = await startSession('monotile_dash');
+
+      // Disable scrolling during game
+      document.body.style.overflow = 'hidden';
+
+      this.dashState = startCountdown(createDashState(), visible);
+      if (this.dashBtnEl) this.dashBtnEl.style.display = 'none';
+
+      this.dashGameLoop();
+    }
+
+    private dashGameLoop() {
+      if (this.dashAnimFrame) cancelAnimationFrame(this.dashAnimFrame);
+
+      const loop = () => {
+        if (this.dashState.phase === 'countdown') {
+          if (isCountdownDone(this.dashState)) {
+            this.dashState = startPlaying(this.dashState);
+          }
+          this.updateDashHud();
+          this.scheduleRender();
+          this.dashAnimFrame = requestAnimationFrame(loop);
+        } else if (this.dashState.phase === 'playing') {
+          this.dashState = checkTimeout(this.dashState);
+          if (this.dashState.phase === 'finished') {
+            this.endDash();
+            return;
+          }
+          this.updateDashHud();
+          this.scheduleRender();
+          this.dashAnimFrame = requestAnimationFrame(loop);
+        }
+      };
+      this.dashAnimFrame = requestAnimationFrame(loop);
+    }
+
+    private updateDashHud() {
+      if (!this.dashHudEl) return;
+      if (this.dashState.phase === 'countdown') {
+        const num = getCountdownNumber(this.dashState);
+        this.dashHudEl.textContent = String(num);
+        this.dashHudEl.style.display = 'block';
+        this.dashHudEl.style.fontSize = '3rem';
+      } else if (this.dashState.phase === 'playing') {
+        const remaining = getTimeRemaining(this.dashState);
+        this.dashHudEl.textContent = `${remaining.toFixed(1)}s · ${this.dashState.score}`;
+        this.dashHudEl.style.fontSize = '1.2rem';
+      } else {
+        this.dashHudEl.style.display = 'none';
+      }
+    }
+
+    private async endDash() {
+      document.body.style.overflow = '';
+      this.updateDashHud();
+      if (this.dashHudEl) {
+        this.dashHudEl.textContent = this.dashState.failedOnMisclick
+          ? `misclick! score: ${this.dashState.score}`
+          : `time! score: ${this.dashState.score}`;
+        this.dashHudEl.style.fontSize = '1.2rem';
+      }
+      this.scheduleRender();
+
+      // Show name entry
+      if (this.dashSession && this.dashState.score > 0) {
+        setTimeout(async () => {
+          const canvas = this.canvas;
+          const result = await showNameEntry(
+            canvas,
+            this.dashSession!,
+            { tilesClicked: this.dashState.score },
+          );
+          this.resetDash();
+        }, 1200);
+      } else {
+        setTimeout(() => this.resetDash(), 2000);
+      }
+    }
+
+    private resetDash() {
+      this.dashState = createDashState();
+      this.dashSession = null;
+      if (this.dashBtnEl) this.dashBtnEl.style.display = '';
+      if (this.dashHudEl) this.dashHudEl.style.display = 'none';
+      this.scheduleRender();
     }
 
     private setupCanvas() {
@@ -591,6 +724,18 @@
 
     private onPointerDown(e: PointerEvent) {
       const idx = this.findTileAtScreen(e.clientX, e.clientY);
+
+      // Dash game: intercept clicks during gameplay
+      if (this.dashState.phase === 'playing' && idx !== -1) {
+        this.dashState = handleTileClick(this.dashState, idx);
+        if (this.dashState.phase === 'finished') {
+          this.endDash();
+        }
+        this.playClickSound();
+        this.scheduleRender();
+        return;
+      }
+
       if (idx === -1) return;
 
       // Release any previously held tile
@@ -761,6 +906,37 @@
         ctx.stroke();
         ctx.globalAlpha = 1;
       }
+
+      // ─── Pass 3: Dash target tile highlight ───
+      if (this.dashState.phase === 'playing') {
+        const targetIdx = getTargetTileIndex(this.dashState);
+        if (targetIdx >= 0 && targetIdx < this.tiles.length) {
+          const tile = this.tiles[targetIdx];
+          const screenVerts = tile.vertices.map(v => this.worldToScreen(v));
+          const screenCentroid = this.worldToScreen(tile.centroid);
+
+          // Pulsing glow
+          const pulse = 0.6 + 0.4 * Math.sin(performance.now() / 200);
+
+          ctx.save();
+          ctx.beginPath();
+          ctx.moveTo(screenVerts[0].x, screenVerts[0].y);
+          for (let j = 1; j < screenVerts.length; j++) {
+            ctx.lineTo(screenVerts[j].x, screenVerts[j].y);
+          }
+          ctx.closePath();
+
+          // Red fill
+          ctx.fillStyle = `rgba(180, 50, 40, ${0.5 * pulse})`;
+          ctx.fill();
+
+          // Bright outline
+          ctx.strokeStyle = `rgba(220, 60, 50, ${0.8 * pulse})`;
+          ctx.lineWidth = 2;
+          ctx.stroke();
+          ctx.restore();
+        }
+      }
     }
   }
 
@@ -796,5 +972,46 @@
 
   .tile-click-counter:empty {
     display: none;
+  }
+
+  .dash-start-btn {
+    position: fixed;
+    top: 12px;
+    right: 50px;
+    z-index: 10;
+    font-family: var(--controls-font);
+    font-size: var(--controls-font-size);
+    color: var(--vf-arrow-color, #3a3020);
+    background: transparent;
+    border: 1px solid var(--vf-arrow-color, #3a3020);
+    border-radius: 4px;
+    padding: 4px 12px;
+    cursor: pointer;
+    opacity: 0.35;
+    transition: opacity 0.2s, background 0.15s, color 0.15s;
+    line-height: 1;
+  }
+
+  .dash-start-btn:hover {
+    opacity: 0.85;
+    background: var(--vf-arrow-color, #3a3020);
+    color: var(--color-bg-light, #BCC6AF);
+  }
+
+  .dash-hud {
+    position: fixed;
+    top: 12px;
+    left: 50%;
+    transform: translateX(-50%);
+    z-index: 10;
+    font-family: var(--font-heading);
+    font-size: 1.2rem;
+    color: var(--color-text-primary, #252525);
+    opacity: 0.7;
+    pointer-events: none;
+    user-select: none;
+    display: none;
+    text-align: center;
+    line-height: 1;
   }
 </style>

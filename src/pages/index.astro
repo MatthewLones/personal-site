@@ -1,4 +1,6 @@
 ---
+export const prerender = true;
+
 import BaseLayout from '../layouts/BaseLayout.astro';
 import Header from '../components/layout/Header.astro';
 import HatTiling from '../components/interactive/HatTiling.astro';
@@ -39,7 +41,62 @@ import PegSolitaire from '../components/interactive/PegSolitaire.astro';
       </div>
     </div>
   </section>
+
+  <section class="wisdom-section">
+    <h3 class="wisdom-title">drop some wisdom</h3>
+    <form class="wisdom-form" id="wisdom-form" autocomplete="off">
+      <input type="text" class="wisdom-input" id="wisdom-input" placeholder="say something nice (or weird)" maxlength="500" />
+      <button type="submit" class="wisdom-btn">drop</button>
+    </form>
+    <span class="wisdom-feedback" id="wisdom-feedback"></span>
+  </section>
 </BaseLayout>
+
+<script>
+  // Wisdom form
+  const wisdomForm = document.getElementById('wisdom-form') as HTMLFormElement | null;
+  wisdomForm?.addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const input = document.getElementById('wisdom-input') as HTMLInputElement;
+    const feedback = document.getElementById('wisdom-feedback');
+    const message = input.value.trim();
+    if (!message) return;
+
+    const btn = wisdomForm.querySelector('button') as HTMLButtonElement;
+    btn.disabled = true;
+    btn.textContent = '...';
+
+    try {
+      const res = await fetch('/api/wisdom', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ message }),
+      });
+      if (res.ok) {
+        input.value = '';
+        if (feedback) {
+          feedback.textContent = 'dropped';
+          setTimeout(() => { feedback.textContent = ''; }, 2000);
+        }
+      } else {
+        const data = await res.json();
+        if (feedback) feedback.textContent = data.error || 'failed';
+      }
+    } catch {
+      if (feedback) feedback.textContent = 'failed';
+    }
+
+    btn.disabled = false;
+    btn.textContent = 'drop';
+  });
+
+  // Page view tracking
+  fetch('/api/track', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ path: location.pathname, referrer: document.referrer }),
+  }).catch(() => {});
+</script>
 
 <style>
   .placeholder-section {
@@ -95,5 +152,78 @@ import PegSolitaire from '../components/interactive/PegSolitaire.astro';
       flex-direction: column;
       gap: 2rem;
     }
+  }
+
+  /* ─── Wisdom Section ────────────────────────────── */
+
+  .wisdom-section {
+    margin-top: 8rem;
+    max-width: 400px;
+  }
+
+  .wisdom-title {
+    font-family: var(--font-heading);
+    font-size: 1rem;
+    font-weight: 700;
+    color: var(--color-text-primary);
+    margin: 0 0 0.75rem 0;
+    opacity: 0.6;
+  }
+
+  .wisdom-form {
+    display: flex;
+    gap: 0.5rem;
+    align-items: center;
+  }
+
+  .wisdom-input {
+    flex: 1;
+    font-family: var(--controls-font);
+    font-size: var(--controls-font-size);
+    padding: 6px 0;
+    border: none;
+    border-bottom: 1px solid var(--vf-arrow-color, #3a3020);
+    background: transparent;
+    color: var(--color-text-primary);
+    outline: none;
+    opacity: 0.5;
+    transition: opacity 0.2s;
+  }
+
+  .wisdom-input:focus {
+    opacity: 0.9;
+  }
+
+  .wisdom-input::placeholder {
+    color: var(--color-text-primary);
+    opacity: 0.3;
+  }
+
+  .wisdom-btn {
+    font-family: var(--controls-font);
+    font-size: var(--controls-font-size);
+    padding: 4px 12px;
+    border: 1px solid var(--vf-arrow-color, #3a3020);
+    border-radius: 4px;
+    background: transparent;
+    color: var(--vf-arrow-color, #3a3020);
+    cursor: pointer;
+    opacity: 0.45;
+    transition: opacity 0.2s, background 0.15s, color 0.15s;
+    line-height: 1;
+  }
+
+  .wisdom-btn:hover {
+    opacity: 0.85;
+    background: var(--vf-arrow-color, #3a3020);
+    color: var(--color-bg-light, #BCC6AF);
+  }
+
+  .wisdom-feedback {
+    font-family: var(--controls-font);
+    font-size: var(--controls-font-size);
+    color: var(--color-text-primary);
+    opacity: 0.5;
+    margin-left: 0.5rem;
   }
 </style>

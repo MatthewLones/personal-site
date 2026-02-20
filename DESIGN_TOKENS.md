@@ -370,3 +370,34 @@ Full-screen leaf-based loading overlay. Dark-brown leaves orbit in a tight circl
 | Eraser softness | `--ls-eraser-softness` | `0.5` | Inner gradient stop for feathered edge (0 = hard, 1 = very soft) |
 | Ready timeout | `--ls-ready-timeout` | `5000` | Max ms to wait for components before forcing fan-out |
 | Min spin time | `--ls-min-spin-time` | `800` | Minimum orbit time before fan-out can trigger (ms) |
+
+## Game Timer
+
+Shared timer display for puzzle leaderboard competitions. Appears next to the move counter in each puzzle's control bar.
+
+| Token | CSS Variable | Value | Notes |
+|---|---|---|---|
+| Timer color | `--timer-color` | `var(--vf-arrow-color)` | Same dark brown as controls |
+| Timer font size | `--timer-font-size` | `var(--controls-font-size)` | Matches control bar text |
+
+## Monotile Dash
+
+Speed game on the hat tiling background. A random visible tile highlights red; click it before time runs out. 30-second countdown, misclick ends the game.
+
+| Token | CSS Variable | Value | Notes |
+|---|---|---|---|
+| Target fill | `--dash-target-fill` | `rgba(180, 50, 40, 0.5)` | Red fill on the target tile |
+| Target stroke | `--dash-target-stroke` | `rgba(220, 60, 50, 0.8)` | Bright red outline on target tile |
+| HUD color | `--dash-hud-color` | `var(--color-text-primary)` | Countdown and score display |
+| HUD opacity | `--dash-hud-opacity` | `0.7` | Semi-transparent HUD text |
+| Button opacity | `--dash-btn-opacity` | `0.35` | "dash" button resting opacity |
+
+## Wisdom Input
+
+"Drop some wisdom" anonymous message form at the bottom of the page.
+
+| Token | CSS Variable | Value | Notes |
+|---|---|---|---|
+| Border color | `--wisdom-border-color` | `var(--vf-arrow-color)` | Input underline and button border |
+| Placeholder opacity | `--wisdom-placeholder-opacity` | `0.3` | Placeholder text transparency |
+| Input opacity | `--wisdom-input-opacity` | `0.5` | Input field resting opacity (0.9 on focus) |

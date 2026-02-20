@@ -315,6 +315,8 @@
     stepConfetti,
   } from '../../lib/lights-out';
   import { launchConfettiOverlay } from '../../lib/confetti-overlay';
+  import { createPuzzleTimer, createLeaderboardPanel, showNameEntry, type PuzzleTimer } from '../../lib/puzzle-ui';
+  import { formatTime } from '../../lib/game-timer';
 
   interface Tokens {
     cellSize: number;
@@ -343,6 +345,8 @@
     private stuckShown = false;
     private lastTime = 0;
     private animating = false;
+    private timer!: PuzzleTimer;
+    private sessionStarted = false;
 
     constructor(
       canvas: HTMLCanvasElement,
@@ -353,6 +357,14 @@
       this.readTokens();
       this.state = createState();
       this.setupCanvas();
+
+      // Set up timer and leaderboard
+      this.timer = createPuzzleTimer(moveCounter);
+      const controlsEl = document.querySelector('.peg-controls') as HTMLElement;
+      createLeaderboardPanel(controlsEl, 'peg_solitaire', (e, rank) => {
+        return `<span>${rank}. ${e.player_name}</span><span>${formatTime(e.time_ms)} · ${e.moves ?? '?'}m</span>`;
+      });
+
       this.render();
       this.canvas.addEventListener('pointerdown', (e) => {
         this.canvas.focus();
@@ -617,12 +629,19 @@
     }
 
     private doMove(move: PegMove) {
+      // Start timer on first move
+      if (!this.sessionStarted) {
+        this.sessionStarted = true;
+        this.timer.start('peg_solitaire');
+      }
+
       this.state = makeMove(this.state, move);
       this.stuckShown = false;
       this.updateCounter();
 
       if (this.state.solved && !this.winShown) {
         this.winShown = true;
+        this.timer.stop();
         const rect = this.canvas.getBoundingClientRect();
         launchConfettiOverlay(
           rect.left + rect.width / 2,
@@ -632,6 +651,13 @@
           this.tokens.confettiGravity,
           ['#c47a2a', '#e8b85a', '#f0d88a', '#3a3020', '#5a4a30'],
         );
+
+        const session = this.timer.getSession();
+        if (session) {
+          setTimeout(() => {
+            showNameEntry(this.canvas, session, { moves: this.state.moves });
+          }, 600);
+        }
       }
 
       if (isStuck(this.state)) {
@@ -660,6 +686,8 @@
       this.winShown = false;
       this.stuckShown = false;
       this.confetti = [];
+      this.sessionStarted = false;
+      this.timer.stop();
       this.updateCounter();
       this.render();
     }

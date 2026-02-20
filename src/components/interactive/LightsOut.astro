@@ -139,6 +139,8 @@
     type Graph3DState,
   } from '../../lib/lights-out';
   import { launchConfettiOverlay } from '../../lib/confetti-overlay';
+  import { createPuzzleTimer, createLeaderboardPanel, showNameEntry, type PuzzleTimer } from '../../lib/puzzle-ui';
+  import { formatTime, type LeaderboardEntry } from '../../lib/game-timer';
 
   // ═══════════════════════════════════════════════════════════
   //  TOKEN READER
@@ -197,6 +199,7 @@
     private lastFrame = 0;
     private winShown = false;
     private hint: number[] | null = null;
+    private timer!: PuzzleTimer;
 
     constructor(canvas: HTMLCanvasElement) {
       this.canvas = canvas;
@@ -207,6 +210,15 @@
 
     private init() {
       this.setupCanvas();
+
+      // Set up timer and leaderboard
+      const counterEl = document.getElementById('lo-moves')!;
+      this.timer = createPuzzleTimer(counterEl);
+      const controlsEl = document.querySelector('.lo-controls') as HTMLElement;
+      createLeaderboardPanel(controlsEl, 'lights_out', (e, rank) => {
+        return `<span>${rank}. ${e.player_name}</span><span>${formatTime(e.time_ms)} · ${e.moves ?? '?'}m</span>`;
+      });
+
       this.newPuzzle();
       this.bindEvents();
       this.render();
@@ -263,6 +275,7 @@
       this.winShown = false;
       this.hint = null;
       this.updateMoveCounter();
+      this.timer.start('lights_out');
       this.render();
     }
 
@@ -271,6 +284,7 @@
         this.hint = null;
       } else {
         this.hint = solveLightsOutGrid(this.state);
+        this.timer.markHint();
       }
       this.render();
     }
@@ -303,6 +317,7 @@
 
       if (this.state.solved && !this.winShown) {
         this.winShown = true;
+        this.timer.stop();
         const rect = this.canvas.getBoundingClientRect();
         launchConfettiOverlay(
           rect.left + rect.width / 2,
@@ -312,6 +327,14 @@
           this.tokens.confettiGravity,
           CONFETTI_COLORS,
         );
+
+        // Show name entry after a brief pause for confetti
+        const session = this.timer.getSession();
+        if (session) {
+          setTimeout(() => {
+            showNameEntry(this.canvas, session, { moves: this.state.moves });
+          }, 600);
+        }
       }
 
       this.startAnimation();

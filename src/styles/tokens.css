@@ -319,4 +319,20 @@
   --ls-eraser-softness: 0.5;
   --ls-ready-timeout: 5000;
   --ls-min-spin-time: 800;
+
+  /* ─── Game Timer ────────────────────────────────── */
+  --timer-color: var(--vf-arrow-color);
+  --timer-font-size: var(--controls-font-size);
+
+  /* ─── Monotile Dash ─────────────────────────────── */
+  --dash-target-fill: rgba(180, 50, 40, 0.5);
+  --dash-target-stroke: rgba(220, 60, 50, 0.8);
+  --dash-hud-color: var(--color-text-primary);
+  --dash-hud-opacity: 0.7;
+  --dash-btn-opacity: 0.35;
+
+  /* ─── Wisdom Input ──────────────────────────────── */
+  --wisdom-border-color: var(--vf-arrow-color);
+  --wisdom-placeholder-opacity: 0.3;
+  --wisdom-input-opacity: 0.5;
 }
