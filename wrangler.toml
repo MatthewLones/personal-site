@@ -1,7 +1,11 @@
 name = "personal-site"
+main = "dist/_worker.js/index.js"
 compatibility_date = "2025-04-01"
 compatibility_flags = ["nodejs_compat"]
-pages_build_output_dir = "./dist"
+
+[assets]
+binding = "ASSETS"
+directory = "./dist"
 
 [[d1_databases]]
 binding = "DB"
