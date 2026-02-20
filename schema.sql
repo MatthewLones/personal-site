@@ -34,10 +34,3 @@ CREATE TABLE IF NOT EXISTS page_views (
 );
 
 CREATE INDEX IF NOT EXISTS idx_views_date ON page_views(created_at);
-
--- Admin sessions
-CREATE TABLE IF NOT EXISTS admin_sessions (
-  token TEXT PRIMARY KEY,
-  created_at TEXT DEFAULT (datetime('now')),
-  expires_at TEXT NOT NULL
-);
