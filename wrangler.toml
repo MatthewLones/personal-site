@@ -3,6 +3,11 @@ main = "dist/_worker.js/index.js"
 compatibility_date = "2025-04-01"
 compatibility_flags = ["nodejs_compat"]
 
+routes = [
+  { pattern = "mattlones.com/*", zone_name = "mattlones.com" },
+  { pattern = "www.mattlones.com/*", zone_name = "mattlones.com" }
+]
+
 [assets]
 binding = "ASSETS"
 directory = "./dist"
@@ -15,3 +20,18 @@ database_id = "87048f86-1850-486f-95fc-e68e0b4426e9"
 [[kv_namespaces]]
 binding = "SESSIONS"
 id = "ac7a1b4f4cc14db28592b51e1053d0ce"
+
+[observability]
+enabled = false
+head_sampling_rate = 1
+
+[observability.logs]
+enabled = true
+head_sampling_rate = 1
+persist = true
+invocation_logs = true
+
+[observability.traces]
+enabled = false
+persist = true
+head_sampling_rate = 1

@@ -15,6 +15,43 @@ const { title = 'Matthew Lones' } = Astro.props;
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <meta name="description" content="Matthew Lones — Applied Mathematics & Computer Engineering, Queen's University" />
+  <link rel="canonical" href="https://www.mattlones.com/" />
+
+  <!-- Open Graph -->
+  <meta property="og:type" content="website" />
+  <meta property="og:url" content="https://www.mattlones.com/" />
+  <meta property="og:title" content={title} />
+  <meta property="og:description" content="Matthew Lones — Applied Mathematics & Computer Engineering, Queen's University" />
+  <meta property="og:image" content="https://www.mattlones.com/photos/profile-formal.jpg" />
+
+  <!-- Twitter Card -->
+  <meta name="twitter:card" content="summary" />
+  <meta name="twitter:title" content={title} />
+  <meta name="twitter:description" content="Matthew Lones — Applied Mathematics & Computer Engineering, Queen's University" />
+  <meta name="twitter:image" content="https://www.mattlones.com/photos/profile-formal.jpg" />
+
+  <!-- Structured Data -->
+  <script type="application/ld+json" set:html={JSON.stringify({
+    "@context": "https://schema.org",
+    "@type": "Person",
+    "name": "Matthew Lones",
+    "alternateName": "Matt Lones",
+    "url": "https://www.mattlones.com",
+    "image": "https://www.mattlones.com/photos/profile-formal.jpg",
+    "jobTitle": "Applied Mathematics & Computer Engineering Student",
+    "affiliation": {
+      "@type": "CollegeOrUniversity",
+      "name": "Queen's University"
+    },
+    "sameAs": [
+      "https://github.com/MatthewLones",
+      "https://www.linkedin.com/in/matthew-lones/"
+    ]
+  })} />
+
+  <!-- Favicon -->
+  <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+
   <link rel="preload" href="/fonts/PlayfairDisplay-Regular.woff2" as="font" type="font/woff2" crossorigin />
   <link rel="preload" href="/fonts/PlayfairDisplay-Italic.woff2" as="font" type="font/woff2" crossorigin />
   <title>{title}</title>
